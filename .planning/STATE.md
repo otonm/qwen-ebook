@@ -73,6 +73,12 @@ None yet.
 - Phase 1 (from research): Podman GPU passthrough (`/dev/kfd`, `/dev/dri`, `--group-add keep-groups`, SELinux `container_use_devices` boolean) must be baked into the real deployment unit and verified from inside the deployed container, not just a manual test.
 - Phase 2 (from research): Cross-chunk character reconciliation strategy is a synthesized best-practice (MEDIUM confidence), not a sourced novel-specific benchmark — validate chunk-size/context-window assumptions against Grok's actual limits and real book lengths before over-building chunking machinery.
 
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260709-vde | Simplify CLAUDE.md: remove cruft now that Phase 1 is built | 2026-07-09 | 08769f9 | [260709-vde-simplify-claude-md-remove-cruft-now-that](./quick/260709-vde-simplify-claude-md-remove-cruft-now-that/) |
+
 ## Deferred Items
 
 Items acknowledged and carried forward from previous milestone close:
