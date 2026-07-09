@@ -84,7 +84,10 @@ def main() -> int:
     # Confirm the result tensor actually lived on the GPU (not a silent CPU
     # fallback that would still "work" but defeat the point of this check).
     if a.device.type != "cuda":
-        print(f"FAIL: tensor device was '{a.device.type}', not 'cuda' — silent CPU fallback", file=sys.stderr)
+        print(
+            f"FAIL: tensor device was '{a.device.type}', not 'cuda' — silent CPU fallback",
+            file=sys.stderr,
+        )
         return 1
 
     print("PASS: GPU compute agent detected and on-device matmul succeeded.")
