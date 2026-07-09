@@ -12,22 +12,23 @@ Given a long text, produce a natural-sounding, multi-character narrated audio fi
 
 ### Validated
 
-(None yet — ship to validate)
+- [x] User can upload a plain text (.txt) file as the source for a new project — Validated in Phase 1
+- [x] Long source texts are chunked on natural structural boundaries (paragraph), not arbitrary token counts — Validated in Phase 1
+- [x] Generated segments are joined in order into a single output audio file (MP3 or WAV) — Validated in Phase 1 (proven with mock audio; real-audio join still pending Phase 1's GPU override, see below)
 
 ### Active
 
-- [ ] User can upload a source text file (.txt or .epub)
+- [ ] User can upload a source text file (.epub) — .txt validated in Phase 1, .epub extraction remains open (Phase 2, ING-02)
 - [ ] Text is analyzed by an LLM (xAI/Grok) which auto-detects the cast of characters (narrator + speaking characters) with inferred descriptions (age, personality, gender) from context
 - [ ] Text is split into narration/dialogue segments, each tagged with a suggested speaker and voice instructions (e.g. "narrates in a soothing voice", "gaining confidence")
 - [ ] User reviews and adjusts the auto-suggested cast via a wizard (rename, merge, edit descriptions, assign/preview a voice) before segments are generated
 - [ ] Voice assignment supports both preset voices (e.g. male/female narrator, stock characters) and LLM/context-derived voice instructions for characters without a good preset match
 - [ ] Main UI is a table (~70% width) with three editable columns: Narrator (dropdown of defined characters), Voice Instructions (free text), Text (free text)
 - [ ] Right-side panel (~30% width) holds config: input file, model, output format, output file, and live conversion progress
-- [ ] Each table row's audio segment is generated individually via Qwen TTS (self-hosted, running on the AMD GPU host)
-- [ ] Generated segments are joined in order into a single output audio file (MP3 or WAV)
+- [ ] Each table row's audio segment is generated individually via Qwen TTS (self-hosted, running on the AMD GPU host) — code/wiring built and proven correct in Phase 1 (GEN-01), but real audio generation is UNPROVEN: the only available dev GPU is an unsupported iGPU that reproducibly crashes on real inference. Accepted via verification override; production RX 9070 XT re-verification is a tracked follow-up, not yet done (see D-09, `backend/GPU-ENABLEMENT.md`)
 - [ ] Editing a row's text or voice instructions after generation only regenerates that segment, then rejoins the full file (not a full regenerate)
 - [ ] Projects (source text, character cast, segment table, generated audio) are saved and can be reopened later — single user, no accounts
-- [ ] App is deployed via Podman on a VM with an AMD GPU (RX 9070 XT, 16GB VRAM), served over the user's Tailscale network (no public exposure, no auth needed beyond Tailscale)
+- [ ] App is deployed via Podman on a VM with an AMD GPU (RX 9070 XT, 16GB VRAM), served over the user's Tailscale network (no public exposure, no auth needed beyond Tailscale) — two-container Podman pod with correct GPU isolation built and proven in Phase 1 (DEPL-01), but the actual RX 9070 XT VM doesn't exist yet — same override/follow-up as above
 
 ### Out of Scope
 
@@ -60,8 +61,8 @@ Given a long text, produce a natural-sounding, multi-character narrated audio fi
 | LLM auto-suggests the character cast (vs. fully manual) | Reduces manual setup for each new text; user just reviews/tweaks | — Pending |
 | Regenerate only the edited segment, not the whole file | Fast iteration when tweaking voice instructions/text per character | — Pending |
 | Voice assignment mixes presets + context-derived instructions | Qwen TTS has limited presets; LLM-inferred character traits fill the gap for one-off characters | — Pending |
-| Self-hosted Qwen TTS on AMD GPU (ROCm) rather than cloud TTS API | Avoids per-request cost, keeps generation local to the Tailscale network | — Pending |
-| Podman (not Docker) for deployment | User's existing infra preference | — Pending |
+| Self-hosted Qwen TTS on AMD GPU (ROCm) rather than cloud TTS API | Avoids per-request cost, keeps generation local to the Tailscale network | Phase 1: code/model/server proven correct against the real `qwen-tts` API; real inference is UNPROVEN — the only dev GPU (Radeon 780M/gfx1103, unsupported) reproducibly crashes on actual synthesis. A documented fallback ladder gets GPU passthrough working for raw compute. Accepted as a spike outcome; re-verification on the production RX 9070 XT is a tracked follow-up |
+| Podman (not Docker) for deployment | User's existing infra preference | Phase 1: two-container Podman pod built and proven — GPU devices correctly isolated to the TTS container only, backend has none, network/error-boundary wiring confirmed working |
 
 ## Evolution
 
@@ -81,4 +82,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-09 after initialization*
+*Last updated: 2026-07-09 after Phase 1 completion*
