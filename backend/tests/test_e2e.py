@@ -54,3 +54,11 @@ def test_non_utf8_upload_is_rejected_with_400():
     response = client.post("/projects", files=files)
 
     assert response.status_code == 400
+
+
+def test_empty_upload_is_rejected_with_400():
+    files = {"file": ("empty.txt", b"   \n\n  ", "text/plain")}
+
+    response = client.post("/projects", files=files)
+
+    assert response.status_code == 400

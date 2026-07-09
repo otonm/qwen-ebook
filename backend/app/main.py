@@ -56,6 +56,10 @@ async def create_project(file: UploadFile = File(...)):  # noqa: B008 (FastAPI D
         raise HTTPException(status_code=400, detail="Upload must be UTF-8 text") from exc
 
     chunks = chunk_paragraphs(text, target_len=settings.CHUNK_TARGET_LEN)
+    if not chunks:
+        raise HTTPException(
+            status_code=400, detail="Upload contains no synthesizable text"
+        )
 
     # Server-generated identifier — never derived from the client-supplied
     # filename, so it can't be used for path traversal.
