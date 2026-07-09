@@ -28,7 +28,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. The uploaded text is chunked on natural structural boundaries (chapter/paragraph), not arbitrary token counts, before being sent for synthesis
   3. Each chunk's audio is synthesized by the self-hosted Qwen TTS service running in its own GPU-scoped Podman container on the actual RX 9070 XT — real audio bytes are produced (verified from inside the real deployed container, not a mocked or ad hoc test)
   4. The per-chunk audio segments are joined in order into a single downloadable MP3/WAV file that plays back audibly start to finish
-**Plans**: TBD
+**Plans**: 3 plans
+  - [ ] 01-01-PLAN.md — Walking Skeleton: upload -> chunk -> mock-TTS -> ffmpeg join -> download (real app skeleton, no GPU)
+  - [ ] 01-02-PLAN.md — GPU/ROCm enablement spike: real Qwen3-TTS audio from an isolated GPU-scoped Podman container (fallback ladder)
+  - [ ] 01-03-PLAN.md — Two-container Podman pod integration: real audible upload-to-audio end-to-end with GPU isolation
 
 ### Phase 2: LLM Cast Detection & Review Wizard
 **Mode:** mvp
@@ -65,6 +68,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Upload-to-Audio Spike (TTS/ROCm De-risk) | 0/TBD | Not started | - |
+| 1. Upload-to-Audio Spike (TTS/ROCm De-risk) | 0/3 | Planned | - |
 | 2. LLM Cast Detection & Review Wizard | 0/TBD | Not started | - |
 | 3. Editable Table, Full Generation Pipeline, Persistence & Deployment | 0/TBD | Not started | - |
