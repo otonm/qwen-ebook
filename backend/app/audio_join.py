@@ -1,9 +1,9 @@
 """Join per-chunk WAV files into one output audio file via ffmpeg's concat
 demuxer, invoked through subprocess.run with an explicit argument list.
 
-Security note (RESEARCH.md Security Domain, T-01-03): never use shell=True
-or string-interpolated commands here, even though the inputs are filenames
-this app generates itself rather than raw user text.
+Security note (RESEARCH.md Security Domain, T-01-03): never invoke a shell
+here (no shell mode, no string-interpolated commands), even though the
+inputs are filenames this app generates itself rather than raw user text.
 """
 
 from __future__ import annotations
