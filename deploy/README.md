@@ -21,8 +21,18 @@ GPU devices), waits for the TTS service's `/healthz` to report ready
 Then:
 
 ```bash
-curl -F file=@sample.txt http://localhost:8000/projects -o audiobook.wav
+curl -F file=@sample.txt http://127.0.0.1:8000/projects -o audiobook.wav
 ```
+
+**Use `127.0.0.1`, not `localhost`.** On this host, rootless Podman's
+`pasta` port-forwarding correctly forwards IPv4 loopback (`127.0.0.1`) but
+resets IPv6 loopback (`::1`) connections, and `localhost` resolves to
+`::1` first on most systems — `curl http://localhost:8000/...` reproducibly
+fails with "Recv failure: Connection reset by peer" here even though the
+backend is healthy and reachable on `127.0.0.1`. This is a host
+networking-stack quirk, not an application bug (confirmed via
+`podman exec qwen-ebook-backend ...` returning 200 for the same request
+made from inside the pod network namespace).
 
 Tear down:
 
@@ -39,16 +49,20 @@ podman pod rm -f qwen-ebook
 
 This split is the permanent architecture, not a spike shortcut: the CPU
 backend never imports `torch`/`qwen-tts`, and the TTS container is the only
-place GPU device nodes are passed in. Verify the isolation directly:
+place GPU device nodes are passed in. Verify the isolation directly by
+checking for the actual device nodes inside each container (more reliable
+on this Podman version than `podman inspect --format '{{.HostConfig.Devices}}'`,
+which does not reflect `--device`-passed devices in its JSON output even
+though the devices are genuinely present/absent inside the container):
 
 ```bash
-podman inspect qwen-ebook-backend --format '{{.HostConfig.Devices}}'  # -> []
-podman inspect qwen-ebook-tts     --format '{{.HostConfig.Devices}}'  # -> /dev/kfd, /dev/dri
+podman exec qwen-ebook-tts     ls /dev/kfd /dev/dri   # -> present
+podman exec qwen-ebook-backend ls /dev/kfd /dev/dri   # -> "No such file or directory"
 ```
 
 Only port `8000` (the backend) is reachable from the host. Port `8001` (the
 TTS service) stays internal to the pod network — confirm with
-`curl http://localhost:8001/healthz` from the host, which should fail to
+`curl http://127.0.0.1:8001/healthz` from the host, which should fail to
 connect (T-03-01: the GPU service is unreachable except via the backend).
 
 ## Why `run-local.sh` instead of `podman kube play deploy/qwen-ebook-pod.yaml`

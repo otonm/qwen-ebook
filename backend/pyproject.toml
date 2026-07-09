@@ -32,3 +32,6 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "integration: requires the real two-container pod running via `bash deploy/run-local.sh`",
+]

@@ -16,7 +16,12 @@ POD_NAME="${POD_NAME:-qwen-ebook}"
 BACKEND_IMAGE="localhost/qwen-ebook-backend:dev"
 TTS_IMAGE="localhost/qwen-ebook-tts:dev"
 BACKEND_HOST_PORT="${BACKEND_HOST_PORT:-8000}"
-HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-180}"
+# Model load includes a multi-GB Hugging Face download on a cold cache —
+# 180s is not enough for a first run. A named volume (below) makes every
+# run after the first one fast, but the default timeout still needs enough
+# headroom for that first download.
+HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-900}"
+HF_CACHE_VOLUME="${HF_CACHE_VOLUME:-qwen-ebook-tts-hf-cache}"
 
 log() { echo "[run-local] $*"; }
 
@@ -44,11 +49,14 @@ log "Starting TTS container (GPU devices /dev/kfd + /dev/dri passed ONLY here, p
 # --security-opt label=disable, HSA_OVERRIDE_GFX_VERSION=11.0.0). On the
 # production RX 9070 XT (gfx1201) VM these flags should be re-verified from
 # scratch per D-09 — they may not all be necessary there.
+# The named volume persists the Hugging Face model download across pod
+# restarts (several GB; without this every restart re-downloads it).
 podman run -d --pod "${POD_NAME}" --name "${POD_NAME}-tts" \
   --device /dev/kfd --device /dev/dri \
   --group-add keep-groups \
   --security-opt label=disable \
   -e HSA_OVERRIDE_GFX_VERSION=11.0.0 \
+  -v "${HF_CACHE_VOLUME}:/root/.cache/huggingface" \
   "${TTS_IMAGE}"
 
 log "Starting backend container (no GPU devices; TTS_BACKEND=http, TTS_SERVICE_URL=http://localhost:8001)..."
@@ -75,6 +83,8 @@ log "TTS service is ready."
 log "Pod '${POD_NAME}' is up. GPU devices are on '${POD_NAME}-tts' only (verify: podman inspect ${POD_NAME}-tts --format '{{.HostConfig.Devices}}')."
 log ""
 log "Try it:"
-log "  curl -F file=@sample.txt http://localhost:${BACKEND_HOST_PORT}/projects -o audiobook.wav"
+log "  curl -F file=@sample.txt http://127.0.0.1:${BACKEND_HOST_PORT}/projects -o audiobook.wav"
+log "  (use 127.0.0.1, not localhost — this host's rootless Podman pasta"
+log "   forwarding resets IPv6 ::1 loopback connections; IPv4 works fine)"
 log ""
 log "Tear down with: podman pod rm -f ${POD_NAME}"
