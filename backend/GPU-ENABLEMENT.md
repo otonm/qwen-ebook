@@ -191,6 +191,28 @@ this finding may not generalize to production hardware at all. This is
 being surfaced as a decision checkpoint rather than solved at all costs
 on non-production hardware, per this plan's D-09 scoping.
 
+## Resolution (human decision)
+
+The checkpoint above was presented to the user with three options: (1)
+attempt further live-GPU mitigation on this host (MIOpen env var tuning or
+a MIOpen kernel-database patch), (2) accept this as a documented spike
+limitation and defer full audio-output verification to the production RX
+9070 XT VM per D-09, or (3) obtain root/sudo access to test the SELinux
+`container_use_devices` fix in isolation.
+
+**Option 2 was chosen.** This plan (01-02) is being closed out with the GPU
+compute-capability finding (Task 1: PASS) and the real-inference-crash
+finding (Task 2: reproducible GPU fault, auto-recovers cleanly, host stable)
+both documented above and accepted as-is. No further live GPU mitigation
+was attempted on this dev host. Audio-output verification for `GEN-01`/
+`DEPL-01` is deferred to the production RX 9070 XT (`gfx1201`) VM per the
+Re-verification Follow-up below, which was already planned as a tracked
+follow-up under D-09 rather than this phase's success bar. Plan 01-03 may
+proceed using this plan's container image and code with this limitation
+flagged.
+
 ## Re-verification Follow-up (D-09)
 
 This entire investigation was performed on the local Radeon 780M (`gfx1103`) dev host. The production deployment target is an AMD RX 9070 XT (`gfx1201`, RDNA4, officially supported by ROCm 7.2+). None of the workarounds here (override, `label=disable`) are expected to be necessary on the production VM once it exists — `gfx1201` is officially supported and the RX 9070 XT is a discrete GPU with its own SELinux/device profile that has not been tested. Re-verify this fallback ladder from scratch on that hardware before assuming any of these specific flags carry over.
+
+**This follow-up now also covers the Task 2 real-inference GPU-crash finding**, not just the passthrough/override flags: on the production RX 9070 XT VM, re-run the full smoke test (Task 1) AND a real `/synthesize` call (Task 2) end-to-end before assuming audio output works there — do not assume the MIOpen/AOTriton workspace issue found on this `gfx1103` iGPU is specific to this hardware without confirming the production `gfx1201` dGPU doesn't hit the same or a related gap.
