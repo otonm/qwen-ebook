@@ -23,11 +23,22 @@ from starlette.concurrency import run_in_threadpool
 from app.audio_join import join_wavs
 from app.chunking import chunk_paragraphs
 from app.config import settings
-from app.tts_client import synthesize
+from app.tts_client import synthesize, tts_health
 
 app = FastAPI()
 
 _READ_CHUNK_SIZE = 1024 * 1024  # 1 MiB
+
+
+@app.get("/healthz")
+async def healthz() -> Response:
+    """Backend readiness probe. IN-02: wires up the previously-unused
+    tts_health() helper so the pod's own readiness/liveness checks can tell
+    whether the backend can currently reach its configured TTS backend."""
+    ok = await run_in_threadpool(tts_health)
+    if not ok:
+        raise HTTPException(status_code=503, detail="TTS backend unavailable")
+    return Response(status_code=200)
 
 
 async def _read_upload_bounded(file: UploadFile, max_bytes: int) -> bytes:
