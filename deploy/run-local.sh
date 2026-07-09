@@ -22,6 +22,11 @@ BACKEND_HOST_PORT="${BACKEND_HOST_PORT:-8000}"
 # headroom for that first download.
 HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-900}"
 HF_CACHE_VOLUME="${HF_CACHE_VOLUME:-qwen-ebook-tts-hf-cache}"
+# gfx1103-dev-host-only GPU workarounds (see backend/GPU-ENABLEMENT.md).
+# Empty by default so a from-scratch gfx1201 production VM (D-09, officially
+# ROCm-supported) gets neither; the dev host opts back in by exporting these.
+GPU_SECURITY_OPT="${GPU_SECURITY_OPT:-}"
+HSA_OVERRIDE_GFX_VERSION="${HSA_OVERRIDE_GFX_VERSION:-}"
 
 log() { echo "[run-local] $*"; }
 
@@ -44,18 +49,21 @@ log "Creating pod '${POD_NAME}' (only port ${BACKEND_HOST_PORT} published to the
 podman pod create --name "${POD_NAME}" -p "${BACKEND_HOST_PORT}:8000"
 
 log "Starting TTS container (GPU devices /dev/kfd + /dev/dri passed ONLY here, per DEPL-01)..."
-# Flags per backend/GPU-ENABLEMENT.md's proven rung-2 fallback-ladder
-# configuration on this local host (--device x2, --group-add keep-groups,
-# --security-opt label=disable, HSA_OVERRIDE_GFX_VERSION=11.0.0). On the
-# production RX 9070 XT (gfx1201) VM these flags should be re-verified from
-# scratch per D-09 — they may not all be necessary there.
+# GPU_SECURITY_OPT / HSA_OVERRIDE_GFX_VERSION are empty by default (unneeded
+# on the gfx1201 production VM, D-09) and only opt-in on the gfx1103 dev host
+# via env vars (set GPU_SECURITY_OPT to "label=disable" and
+# HSA_OVERRIDE_GFX_VERSION to "11.0.0" to restore the old dev-host behavior)
+# — see backend/GPU-ENABLEMENT.md for why the dev host needs them.
+# --device x2 and --group-add keep-groups stay unconditional (universal).
 # The named volume persists the Hugging Face model download across pod
 # restarts (several GB; without this every restart re-downloads it).
+tts_gpu_flags=()
+[ -n "${GPU_SECURITY_OPT}" ] && tts_gpu_flags+=(--security-opt "${GPU_SECURITY_OPT}")
+[ -n "${HSA_OVERRIDE_GFX_VERSION}" ] && tts_gpu_flags+=(-e "HSA_OVERRIDE_GFX_VERSION=${HSA_OVERRIDE_GFX_VERSION}")
 podman run -d --pod "${POD_NAME}" --name "${POD_NAME}-tts" \
   --device /dev/kfd --device /dev/dri \
   --group-add keep-groups \
-  --security-opt label=disable \
-  -e HSA_OVERRIDE_GFX_VERSION=11.0.0 \
+  "${tts_gpu_flags[@]}" \
   -v "${HF_CACHE_VOLUME}:/home/ubuntu/.cache/huggingface" \
   "${TTS_IMAGE}"
 
