@@ -78,6 +78,7 @@ None yet.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260709-vde | Simplify CLAUDE.md: remove cruft now that Phase 1 is built | 2026-07-09 | 08769f9 | [260709-vde-simplify-claude-md-remove-cruft-now-that](./quick/260709-vde-simplify-claude-md-remove-cruft-now-that/) |
+| 260709-vlc | Prepare deploy tooling for bringing up the production RX 9070 XT VM (Debian 13, Tailscale SSH) | 2026-07-09 | a8d4461 | [260709-vlc-prepare-deploy-tooling-for-bringing-up-t](./quick/260709-vlc-prepare-deploy-tooling-for-bringing-up-t/) |
 
 ## Deferred Items
 
