@@ -11,8 +11,10 @@ from pathlib import Path
 
 os.environ.setdefault("TTS_BACKEND", "mock")
 
+import httpx  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+import app.main as main_module  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.main import app  # noqa: E402
 
@@ -77,3 +79,26 @@ def test_chunk_files_are_cleaned_up_after_successful_join():
 
     after = set(upload_dir.glob("*")) if upload_dir.exists() else set()
     assert after == before, f"orphaned chunk files left behind: {after - before}"
+
+
+def test_tts_4xx_response_is_surfaced_as_502_with_reason_not_generic(monkeypatch):
+    """WR-02: a TTS-container 4xx (e.g. unsupported speaker/config error)
+    must not be collapsed into the same generic 502 message used for a
+    genuine connectivity/5xx failure — the reason must be preserved."""
+
+    def _raise_400(*_args, **_kwargs):
+        request = httpx.Request("POST", "http://tts.invalid/synthesize")
+        response = httpx.Response(
+            400, request=request, text="unsupported speaker: bogus"
+        )
+        raise httpx.HTTPStatusError(
+            "Bad Request", request=request, response=response
+        )
+
+    monkeypatch.setattr(main_module, "synthesize", _raise_400)
+
+    files = {"file": ("sample.txt", SAMPLE_TEXT.encode("utf-8"), "text/plain")}
+    response = client.post("/projects", files=files)
+
+    assert response.status_code == 502
+    assert "unsupported speaker: bogus" in response.json()["detail"]

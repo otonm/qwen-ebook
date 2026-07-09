@@ -95,6 +95,20 @@ async def create_project(file: UploadFile = File(...)):  # noqa: B008 (FastAPI D
                 raise HTTPException(
                     status_code=504, detail="TTS service timed out"
                 ) from exc
+            except httpx.HTTPStatusError as exc:
+                # WR-02: distinguish the TTS container's own 4xx client/
+                # config errors (e.g. an unsupported TTS_DEFAULT_SPEAKER,
+                # oversized chunk text) from a genuine 5xx/connectivity
+                # failure — collapsing both into the same generic 502
+                # "unavailable" message hides the real cause.
+                if exc.response.status_code < 500:
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"TTS service rejected request: {exc.response.text}",
+                    ) from exc
+                raise HTTPException(
+                    status_code=502, detail="TTS service unavailable"
+                ) from exc
             except httpx.HTTPError as exc:
                 raise HTTPException(
                     status_code=502, detail="TTS service unavailable"
