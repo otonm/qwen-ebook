@@ -69,5 +69,8 @@ def load_settings() -> Settings:
 
 
 # Module-level singleton. Read once at import time; tests that need different
-# env vars should reload the module or monkeypatch `settings` attributes.
+# env vars should reload the module, or use
+# `monkeypatch.setattr(app.config, "settings", Settings(...))` to swap the
+# whole singleton — individual fields can't be patched since `Settings` is
+# frozen (IN-01).
 settings = load_settings()
