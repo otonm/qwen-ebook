@@ -57,3 +57,11 @@ this block from `research/STACK.md` and clobber the condensation. That is
 acceptable for now; if it recurs, raise removing the `source:` marker with the
 user rather than deciding it here.
 <!-- GSD:stack-end -->
+
+## Conventions
+
+- **Lint gate (required):** After any major change to Python code, run
+  `cd backend && uv run ruff check .` (strict: `E, F, I, UP, B` per
+  `backend/pyproject.toml`). Apply `--fix` for auto-fixable issues, then fix
+  any remaining warnings manually before committing — do not commit with
+  outstanding ruff warnings.
