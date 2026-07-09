@@ -146,4 +146,11 @@ async def create_project(file: UploadFile = File(...)):  # noqa: B008 (FastAPI D
 
     media_type = "audio/wav" if settings.OUTPUT_FORMAT == "wav" else "audio/mpeg"
     output_bytes = await run_in_threadpool(output_path.read_bytes)
-    return Response(content=output_bytes, media_type=media_type)
+    # IN-04: without a Content-Disposition header, browsers/`curl -O` get no
+    # suggested filename for the generated audio.
+    filename = f"{project_id}.{settings.OUTPUT_FORMAT}"
+    return Response(
+        content=output_bytes,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
