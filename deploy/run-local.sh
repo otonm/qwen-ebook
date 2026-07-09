@@ -56,7 +56,7 @@ podman run -d --pod "${POD_NAME}" --name "${POD_NAME}-tts" \
   --group-add keep-groups \
   --security-opt label=disable \
   -e HSA_OVERRIDE_GFX_VERSION=11.0.0 \
-  -v "${HF_CACHE_VOLUME}:/root/.cache/huggingface" \
+  -v "${HF_CACHE_VOLUME}:/home/ubuntu/.cache/huggingface" \
   "${TTS_IMAGE}"
 
 log "Starting backend container (no GPU devices; TTS_BACKEND=http, TTS_SERVICE_URL=http://localhost:8001)..."

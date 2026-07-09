@@ -31,6 +31,20 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 ENV TTS_PORT=8001
 
+# WR-05: run as non-root. GPU device access is via group membership on
+# /dev/kfd + /dev/dri, not root — deploy/run-local.sh already grants that
+# via `--group-add keep-groups`, which maps host supplementary groups in
+# regardless of which user the container process runs as. Reuse the base
+# rocm/pytorch image's existing UID-1000 `ubuntu` user (Ubuntu 24.04 base
+# images ship one by default) rather than creating a fresh one that would
+# collide on UID 1000. The Hugging Face model cache defaults to
+# $HOME/.cache/huggingface, which a non-root user can't write under /root,
+# so HOME moves to this user's own home (deploy/run-local.sh's cache volume
+# mount is updated to match).
+RUN chown -R ubuntu:ubuntu /app
+ENV HOME=/home/ubuntu
+USER ubuntu
+
 EXPOSE 8001
 
 CMD ["uvicorn", "tts_service.server:app", "--host", "0.0.0.0", "--port", "8001"]
