@@ -95,23 +95,58 @@ way). This was accepted by the user as a documented spike limitation:
   **not** expected to succeed on this dev host — that verification is
   deferred to the production RX 9070 XT (`gfx1201`) VM.
 
-## Follow-up: re-verify on the production RX 9070 XT VM (D-09)
+## Production VM bring-up
 
-This entire local run was performed and verified against a `gfx1103`
-integrated GPU that is not on ROCm's officially supported architecture
-list. The production deployment target is an AMD RX 9070 XT (`gfx1201`,
-RDNA4, officially supported by ROCm 7.2+, dedicated 16GB VRAM). Before
-relying on this deployment in production:
+The production target is an AMD RX 9070 XT (`gfx1201`, RDNA4, officially
+ROCm-7.2+-supported, dedicated 16GB VRAM) Debian 13 host. This section
+covers getting from a fresh VM to a running pod; it does not yet exist, so
+none of this has been run against real hardware (D-09).
 
-1. Re-run `bash deploy/run-local.sh` on the RX 9070 XT VM from scratch.
-2. Re-verify whether the `HSA_OVERRIDE_GFX_VERSION` override and
-   `--security-opt label=disable` are still necessary — `gfx1201` is
-   officially supported, so neither workaround is expected to be needed,
-   but this has not been tested.
-3. Confirm a real `POST /projects` request returns audible, intelligible
-   synthesized audio end-to-end (the actual GEN-01/DEPL-01 audio-output
-   bar that this local dev host's GPU could not clear — see
-   `backend/GPU-ENABLEMENT.md`).
+### Reaching the VM
+
+The VM joins this Tailscale tailnet and is reached exclusively via
+Tailscale SSH at its Tailscale hostname — `ssh <user>@<tailscale-hostname>`.
+It has no public internet exposure, matching this project's Tailscale-only
+access model (no port-forwarding, no public IP).
+
+### One-time bootstrap
+
+On the fresh Debian 13 host, run once:
+
+```bash
+bash deploy/bootstrap-vm.sh
+```
+
+This idempotently installs Podman, Tailscale, and git; adds the invoking
+user to the `render` and `video` groups (needed for `/dev/kfd`/`/dev/dri`
+access without root — see `backend/GPU-ENABLEMENT.md`); and clones this
+repo. It deliberately leaves two manual follow-ups to the user (it never
+runs them, since both need interactive input):
+
+1. Run `tailscale up --ssh` via sudo to join the tailnet and enable
+   Tailscale SSH (interactive auth).
+2. Re-login (or `newgrp render` / `newgrp video`) for the new group
+   membership to take effect.
+
+### D-09 GPU re-verification checklist
+
+This entire local run (and `run-local.sh`'s GPU flags) was performed and
+verified against a `gfx1103` integrated GPU that is not on ROCm's
+officially supported architecture list — see `backend/GPU-ENABLEMENT.md`
+for the full historical gfx1103 fallback-ladder investigation log. Before
+relying on this deployment in production, on the RX 9070 XT VM:
+
+1. Run `bash deploy/run-local.sh` from scratch with **no** GPU-flag env
+   vars set (`GPU_SECURITY_OPT` and `HSA_OVERRIDE_GFX_VERSION` unset) —
+   `gfx1201` is officially supported, so neither dev-host workaround is
+   expected to be needed.
+2. Confirm a real `POST /projects` (or `/synthesize`) request returns
+   audible, intelligible synthesized audio end-to-end (the actual
+   GEN-01/DEPL-01 audio-output bar that the `gfx1103` dev host's GPU could
+   not clear).
+3. Only if a genuine failure is reproduced, fall back by exporting
+   `HSA_OVERRIDE_GFX_VERSION` and/or `GPU_SECURITY_OPT` (e.g. `label=disable`)
+   — do not pre-emptively carry the dev-host workarounds over.
 
 This is a tracked follow-up gate, not part of this phase's success bar
 (01-SKELETON.md "Follow-up Gate").
