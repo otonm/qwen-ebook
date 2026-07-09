@@ -23,7 +23,9 @@ podman run --rm \
 - `cuda.is_available()` = `True`
 - Device detected: `AMD Radeon 780M Graphics`, reported `gcnArchName` = `gfx1100` (spoofed via the override)
 - 256x256 on-device matmul: **PASS**, exit code 0
-- Host remained fully stable throughout every experiment in this log (no `amdgpu`/`kfd` kernel resets, no page faults, no desktop hang — confirmed via `journalctl -k` and `uptime` after each attempt)
+- Host remained fully stable throughout the rung 1/2 compute-smoke investigation below (no `amdgpu`/`kfd` kernel resets, no page faults, no desktop hang — confirmed via `journalctl -k` and `uptime` after each attempt)
+
+**IMPORTANT — updated after Task 2:** this rung-2 configuration is proven sufficient for isolated GPU compute (device detection + on-device matmul), which was Task 1's success criterion. It is **not** sufficient for full Qwen3-TTS model inference on this host — real `/synthesize` calls reproducibly crash with a recoverable `amdgpu` GPU reset. See "Task 2 finding" section below for the full detail. This host is not the production target (D-09), so this finding is being surfaced as a decision checkpoint rather than solved at all costs here.
 
 ## Fallback Ladder — What Was Actually Tried, In Order
 
@@ -98,6 +100,96 @@ This host's device nodes carry the labels RESEARCH.md documented: `/dev/kfd` is 
 | `container_use_devices` (getsebool) | off (root required to change; not changed in this session) |
 | `container_use_dri_devices` (getsebool) | on |
 | Kernel | `7.0.9-ogc3.2.fc44` (Bazzite/Fedora-Atomic) |
+
+## Task 2 finding: real model inference crashes reproducibly (rung 2 is insufficient for full generation)
+
+After Task 1's smoke test passed cleanly (exit 0) with the rung-2 configuration
+(`--security-opt label=disable --device /dev/kfd --device /dev/dri --group-add keep-groups -e HSA_OVERRIDE_GFX_VERSION=11.0.0`),
+Task 2's actual `/synthesize` endpoint (real `Qwen3TTSModel.generate_custom_voice()`
+call, not a toy matmul) was tested against a running `tts_service.server:app`
+container using the identical rung-2 flags. The model loaded successfully
+(`GET /healthz` → 200, default speaker `aiden` selected from `['aiden',
+'dylan', 'eric', 'ono_anna', 'ryan', 'serena', 'sohee', 'uncle_fu',
+'vivian']`), but **every real synthesis call crashed the container**
+(exit code 139), reproducibly across two independent container instances.
+
+**Attempt 1** (`POST /synthesize {"text":"Hello, this is a test of the
+narrator voice."}`):
+```
+Setting `pad_token_id` to `eos_token_id`:2150 for open-end generation.
+HW Exception by GPU node-1 (Agent handle: 0x182d42e0) reason :GPU Hang
+```
+Kernel log: `amdgpu 0000:65:00.0: GPU reset begin!` → `GPU reset(1) succeeded!`
+then a second `GPU reset(2) succeeded!` (MES failed to respond to
+REMOVE_QUEUE, triggered a follow-up MODE2 reset). `kwin_wayland` logged "A
+graphics reset not attributable to the current GL context occurred" (the
+desktop compositor observed the reset but recovered).
+
+**Attempt 2** (fresh container, same flags, same request): crashed
+identically but with a different low-level signature:
+```
+.../transformers/integrations/sdpa_attention.py:96: UserWarning: Using AOTriton backend for Efficient Attention forward...
+MIOpen(HIP): Warning [IsEnoughWorkspace] [GetSolutionsFallback WTI] Solver <GemmFwdRest>, workspace required: 10321920, provided ptr: 0 size: 0
+MIOpen(HIP): Warning [IsEnoughWorkspace] [EvaluateInvokers] Solver <GemmFwdRest>, workspace required: 10321920, provided ptr: 0 size: 0
+(x2 more of the same warning pair)
+Memory access fault by GPU node-1 (Agent handle: 0x3d13f6e0) on address (nil). Reason: Page not present or supervisor privilege.
+```
+Kernel log: `GPU reset(3) succeeded!` then `GPU reset(4) succeeded!`
+(same REMOVE_QUEUE/MES-unrecoverable-state pattern as attempt 1).
+
+**Critical safety observation:** in both attempts, the host's `amdgpu`
+kernel driver auto-recovered via its built-in MODE2 GPU reset — `uptime`
+and `/dev/kfd`/`/dev/dri` enumeration were confirmed normal after each
+crash, and a plain re-run of Task 1's smoke-test matmul immediately after
+attempt 1 passed cleanly (exit 0), proving the device itself was not
+permanently wedged. This is a *recoverable* fault, not the catastrophic
+full-desktop hard-lock RESEARCH.md Pitfall 1 warned about for
+`HSA_OVERRIDE_GFX_VERSION=11.0.2` specifically (that value was never
+tried). Nonetheless, per Pitfall 1's explicit guidance ("if any override
+value causes an immediate hang... stop experimenting"), further live GPU
+stress attempts on this host were deliberately stopped after this second
+reproduction rather than continuing open-ended retries.
+
+**Root-cause hypothesis (not confirmed):** the `MIOpen ... Solver
+<GemmFwdRest>, workspace required: 10321920, provided ptr: 0 size: 0`
+warning immediately preceding attempt 2's page fault strongly suggests
+RESEARCH.md's secondary-sourced concern is real: [MIOpen gfx1103
+precompiled convolution/GEMM kernel database
+gap](https://github.com/ROCm/rocm-libraries/issues/6335). The isolated
+256x256 matmul in Task 1's smoke test does not exercise this code path
+(it's a plain BLAS GEMM, not an attention solver going through MIOpen's
+fallback-solver search with an under-provisioned workspace buffer), which
+is why Task 1 passed while real model inference — which routes through
+`transformers`' SDPA attention integration using the AOTriton backend on
+ROCm — did not. This is architecturally distinct from Pitfall 2's
+rocBLAS/Tensile GEMM-kernel gap (a different library, MIOpen vs rocBLAS)
+and was not something the plan's fallback ladder explicitly enumerated a
+rung-3 fix for (the documented Fedora Tensile-kernel-extraction
+workaround targets rocBLAS, not MIOpen).
+
+**Rung 3 (rocBLAS/Tensile kernel patch) was not attempted** for this
+specific MIOpen/AOTriton failure mode — it targets a different library
+than the one implicated here, and per an explicit steer to avoid
+open-ended retrying on non-production hardware, further live-GPU
+mitigation attempts (e.g., forcing a different SDPA backend, MIOpen env
+var tuning `MIOPEN_FIND_MODE`/`MIOPEN_DEBUG_CONV_GEMM`, or attempting a
+MIOpen kernel-database patch analogous to Pitfall 2's rocBLAS workaround)
+were deliberately deferred to a human decision rather than attempted
+blind.
+
+**Bottom line for this plan (D-08):** the GPU IS proven usable for real
+compute from inside the isolated container (device detection + on-device
+matmul, Task 1's success criterion) on this local `gfx1103` hardware, but
+**full Qwen3-TTS model inference does not yet reliably produce real audio
+on this specific dev host** — every attempt reproducibly triggers a
+recoverable GPU fault/reset during the attention/GEMM-heavy forward pass.
+Since this dev host (Radeon 780M / gfx1103, an unsupported iGPU sharing
+system RAM, force-overridden to report as `gfx1100`) is explicitly *not*
+the production target (RX 9070 XT / gfx1201, officially ROCm-7.2-
+supported, dedicated 16GB VRAM — see Re-verification Follow-up below),
+this finding may not generalize to production hardware at all. This is
+being surfaced as a decision checkpoint rather than solved at all costs
+on non-production hardware, per this plan's D-09 scoping.
 
 ## Re-verification Follow-up (D-09)
 
