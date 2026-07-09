@@ -1,0 +1,39 @@
+# CPU-only backend image (DEPL-01 isolation boundary).
+#
+# This image never imports any GPU/ML runtime — all GPU work happens
+# across the internal HTTP boundary to the isolated TTS container
+# (see backend/Containerfile.tts, which owns those dependencies). It only
+# needs Python, the FastAPI/uvicorn/httpx stack, and the `ffmpeg` system
+# binary for the concat-demuxer join step (CLAUDE.md Installation: "ffmpeg
+# as an OS package inside the container image, not pip").
+FROM python:3.12-slim
+
+# ffmpeg via apt (CLAUDE.md), not pip. No build-essential/compilers needed —
+# this project has no C-extension deps.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# uv (D-11 / CLAUDE.md mandated Python tooling) — installed via pip from
+# PyPI (official astral-sh package), matching how Plan 01 provisioned it on
+# the dev host, rather than pulling in an extra base image just for uv.
+RUN pip install --no-cache-dir uv
+
+WORKDIR /app
+
+# Install dependencies first (better layer caching) — no dev deps, no
+# project code yet, so an app/ code change doesn't invalidate the dep layer.
+COPY pyproject.toml uv.lock /app/
+RUN uv sync --frozen --no-dev --no-install-project
+
+# Now copy the actual backend package and finish the sync so the project
+# itself is installed too.
+COPY app/ /app/app/
+RUN uv sync --frozen --no-dev
+
+ENV PYTHONUNBUFFERED=1
+ENV PATH="/app/.venv/bin:${PATH}"
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
