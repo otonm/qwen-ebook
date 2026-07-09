@@ -18,6 +18,7 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import Response
+from starlette.concurrency import run_in_threadpool
 
 from app.audio_join import join_wavs
 from app.chunking import chunk_paragraphs
@@ -77,7 +78,12 @@ async def create_project(file: UploadFile = File(...)):  # noqa: B008 (FastAPI D
         # timeouts (Plan 01); this wiring translates the raised client
         # error into the appropriate gateway status code.
         try:
-            chunk_audio = synthesize(chunk_text, settings.TTS_DEFAULT_SPEAKER)
+            # CR-02: synthesize() is a blocking (sync httpx) call with up to
+            # a 300s read timeout — run it in the threadpool so it doesn't
+            # freeze the single event loop for the whole app while it waits.
+            chunk_audio = await run_in_threadpool(
+                synthesize, chunk_text, settings.TTS_DEFAULT_SPEAKER
+            )
         except httpx.TimeoutException as exc:
             raise HTTPException(
                 status_code=504, detail="TTS service timed out"
@@ -87,11 +93,14 @@ async def create_project(file: UploadFile = File(...)):  # noqa: B008 (FastAPI D
                 status_code=502, detail="TTS service unavailable"
             ) from exc
         chunk_path = upload_dir / f"{project_id}_chunk_{index:04d}.wav"
-        chunk_path.write_bytes(chunk_audio)
+        await run_in_threadpool(chunk_path.write_bytes, chunk_audio)
         chunk_paths.append(str(chunk_path))
 
     output_path = output_dir / f"{project_id}.{settings.OUTPUT_FORMAT}"
-    join_wavs(chunk_paths, str(output_path), fmt=settings.OUTPUT_FORMAT)
+    await run_in_threadpool(
+        join_wavs, chunk_paths, str(output_path), fmt=settings.OUTPUT_FORMAT
+    )
 
     media_type = "audio/wav" if settings.OUTPUT_FORMAT == "wav" else "audio/mpeg"
-    return Response(content=output_path.read_bytes(), media_type=media_type)
+    output_bytes = await run_in_threadpool(output_path.read_bytes)
+    return Response(content=output_bytes, media_type=media_type)

@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Response
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 logger = logging.getLogger("tts_service.server")
 logging.basicConfig(level=logging.INFO)
@@ -95,7 +96,13 @@ async def synthesize(req: SynthesizeRequest) -> Response:
         return Response(status_code=422, content="text must not be empty")
 
     try:
-        wav_bytes = _model_module.synthesize_wav(req.text, req.speaker)
+        # CR-02: synthesize_wav() is a synchronous, GPU-bound call that can
+        # take a long time per chunk. Running it directly on the event loop
+        # would block /healthz and every other request for the duration —
+        # offload it to the threadpool instead.
+        wav_bytes = await run_in_threadpool(
+            _model_module.synthesize_wav, req.text, req.speaker
+        )
     except ValueError as exc:
         # Unsupported speaker / empty text / oversized text -> 400, not 500
         # (T-02-01: qwen-tts's own get_supported_speakers()-backed
