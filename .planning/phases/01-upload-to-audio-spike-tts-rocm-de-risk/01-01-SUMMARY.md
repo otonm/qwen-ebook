@@ -117,3 +117,7 @@ None. The mock TTS backend (`TTS_BACKEND=mock`) is an intentional, documented st
 ## Threat Flags
 
 None. All new surface (upload endpoint, ffmpeg subprocess, filesystem writes) was explicitly anticipated and mitigated per the plan's `<threat_model>` (T-01-01 through T-01-04); no additional trust-boundary-crossing surface was introduced beyond what the plan specified.
+
+## Self-Check: PASSED
+
+All 13 created files verified present on disk; all 5 task/summary commits (397c21e, e2a6538, 1409536, e656b64, 65159a4) verified present in git log.
