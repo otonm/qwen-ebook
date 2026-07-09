@@ -21,6 +21,8 @@ soundfile
 einops
 onnxruntime
 librosa
-sox
 fastapi==0.139.0
 uvicorn==0.51.0
+# IN-03: `sox` (PyPI wrapper) was listed here but never imported by
+# tts_service/model.py or tts_service/server.py, and Containerfile.tts never
+# installs the underlying `sox` system binary it wraps — dead weight, removed.
