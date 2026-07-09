@@ -7,6 +7,7 @@ upload-rejection cases (oversized upload, non-UTF-8 body).
 """
 
 import os
+from pathlib import Path
 
 os.environ.setdefault("TTS_BACKEND", "mock")
 
@@ -62,3 +63,17 @@ def test_empty_upload_is_rejected_with_400():
     response = client.post("/projects", files=files)
 
     assert response.status_code == 400
+
+
+def test_chunk_files_are_cleaned_up_after_successful_join():
+    """WR-01: intermediate per-chunk WAVs written to UPLOAD_DIR must not be
+    left behind once the joined output has been produced."""
+    upload_dir = Path(settings.UPLOAD_DIR)
+    before = set(upload_dir.glob("*")) if upload_dir.exists() else set()
+
+    files = {"file": ("sample.txt", SAMPLE_TEXT.encode("utf-8"), "text/plain")}
+    response = client.post("/projects", files=files)
+    assert response.status_code == 200
+
+    after = set(upload_dir.glob("*")) if upload_dir.exists() else set()
+    assert after == before, f"orphaned chunk files left behind: {after - before}"

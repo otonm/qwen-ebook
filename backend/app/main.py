@@ -70,36 +70,46 @@ async def create_project(file: UploadFile = File(...)):  # noqa: B008 (FastAPI D
     upload_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # WR-01: chunk WAVs are intermediate scratch files — no longer needed
+    # once the join succeeds, and must not be left behind (orphaned,
+    # growing disk usage forever) if any step below fails partway through.
+    # The `finally` below removes whatever chunk files were actually
+    # written, whether the request ends in success or an HTTPException.
     chunk_paths: list[str] = []
-    for index, chunk_text in enumerate(chunks):
-        # T-03-02: a TTS-container failure/timeout must surface as a clean
-        # HTTP error to the client, not an unhandled 500 or an indefinite
-        # hang. tts_client.synthesize() itself applies bounded httpx
-        # timeouts (Plan 01); this wiring translates the raised client
-        # error into the appropriate gateway status code.
-        try:
-            # CR-02: synthesize() is a blocking (sync httpx) call with up to
-            # a 300s read timeout — run it in the threadpool so it doesn't
-            # freeze the single event loop for the whole app while it waits.
-            chunk_audio = await run_in_threadpool(
-                synthesize, chunk_text, settings.TTS_DEFAULT_SPEAKER
-            )
-        except httpx.TimeoutException as exc:
-            raise HTTPException(
-                status_code=504, detail="TTS service timed out"
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise HTTPException(
-                status_code=502, detail="TTS service unavailable"
-            ) from exc
-        chunk_path = upload_dir / f"{project_id}_chunk_{index:04d}.wav"
-        await run_in_threadpool(chunk_path.write_bytes, chunk_audio)
-        chunk_paths.append(str(chunk_path))
+    try:
+        for index, chunk_text in enumerate(chunks):
+            # T-03-02: a TTS-container failure/timeout must surface as a
+            # clean HTTP error to the client, not an unhandled 500 or an
+            # indefinite hang. tts_client.synthesize() itself applies
+            # bounded httpx timeouts (Plan 01); this wiring translates the
+            # raised client error into the appropriate gateway status code.
+            try:
+                # CR-02: synthesize() is a blocking (sync httpx) call with
+                # up to a 300s read timeout — run it in the threadpool so
+                # it doesn't freeze the single event loop for the whole app
+                # while it waits.
+                chunk_audio = await run_in_threadpool(
+                    synthesize, chunk_text, settings.TTS_DEFAULT_SPEAKER
+                )
+            except httpx.TimeoutException as exc:
+                raise HTTPException(
+                    status_code=504, detail="TTS service timed out"
+                ) from exc
+            except httpx.HTTPError as exc:
+                raise HTTPException(
+                    status_code=502, detail="TTS service unavailable"
+                ) from exc
+            chunk_path = upload_dir / f"{project_id}_chunk_{index:04d}.wav"
+            await run_in_threadpool(chunk_path.write_bytes, chunk_audio)
+            chunk_paths.append(str(chunk_path))
 
-    output_path = output_dir / f"{project_id}.{settings.OUTPUT_FORMAT}"
-    await run_in_threadpool(
-        join_wavs, chunk_paths, str(output_path), fmt=settings.OUTPUT_FORMAT
-    )
+        output_path = output_dir / f"{project_id}.{settings.OUTPUT_FORMAT}"
+        await run_in_threadpool(
+            join_wavs, chunk_paths, str(output_path), fmt=settings.OUTPUT_FORMAT
+        )
+    finally:
+        for chunk_path_str in chunk_paths:
+            Path(chunk_path_str).unlink(missing_ok=True)
 
     media_type = "audio/wav" if settings.OUTPUT_FORMAT == "wav" else "audio/mpeg"
     output_bytes = await run_in_threadpool(output_path.read_bytes)
