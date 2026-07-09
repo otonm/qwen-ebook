@@ -6,10 +6,17 @@
 # torch/torchaudio's base version comes from the rocm/pytorch base image
 # (see Containerfile.tts) — do NOT `pip install torch` here, that silently
 # installs a CPU/CUDA build and breaks GPU usage (RESEARCH.md Anti-Pattern).
+#
+# WR-06: qwen-tts/transformers/accelerate are intentionally NOT listed here.
+# Containerfile.tts installs them explicitly (qwen-tts with --no-deps, then
+# the exact transformers/accelerate pins) specifically so nothing in this
+# file can override them via normal dependency resolution. Listing the same
+# pins here too was a dual source of truth: the final
+# `pip install -r requirements.txt` step doesn't use --no-deps, so it would
+# silently re-resolve qwen-tts's own deps the moment these versions
+# diverged from Containerfile.tts's pins. Bump versions in Containerfile.tts
+# only.
 
-qwen-tts==0.1.1
-transformers==4.57.3
-accelerate==1.12.0
 soundfile
 einops
 onnxruntime
