@@ -102,3 +102,19 @@ def test_tts_4xx_response_is_surfaced_as_502_with_reason_not_generic(monkeypatch
 
     assert response.status_code == 502
     assert "unsupported speaker: bogus" in response.json()["detail"]
+
+
+def test_join_failure_is_a_clean_500_not_an_unhandled_exception(monkeypatch):
+    """WR-03: an ffmpeg/join RuntimeError must be translated into a clean
+    500 response, not propagate as an unhandled exception."""
+
+    def _raise_runtime_error(*_args, **_kwargs):
+        raise RuntimeError("ffmpeg concat failed (exit 1): boom")
+
+    monkeypatch.setattr(main_module, "join_wavs", _raise_runtime_error)
+
+    files = {"file": ("sample.txt", SAMPLE_TEXT.encode("utf-8"), "text/plain")}
+    response = client.post("/projects", files=files)
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Audio join failed"

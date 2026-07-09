@@ -118,9 +118,17 @@ async def create_project(file: UploadFile = File(...)):  # noqa: B008 (FastAPI D
             chunk_paths.append(str(chunk_path))
 
         output_path = output_dir / f"{project_id}.{settings.OUTPUT_FORMAT}"
-        await run_in_threadpool(
-            join_wavs, chunk_paths, str(output_path), fmt=settings.OUTPUT_FORMAT
-        )
+        try:
+            # WR-03: unlike the TTS call above, a join failure (bad
+            # OUTPUT_FORMAT, corrupt chunk, missing ffmpeg binary) must not
+            # be allowed to propagate as an unhandled exception / bare 500.
+            await run_in_threadpool(
+                join_wavs, chunk_paths, str(output_path), fmt=settings.OUTPUT_FORMAT
+            )
+        except RuntimeError as exc:
+            raise HTTPException(
+                status_code=500, detail="Audio join failed"
+            ) from exc
     finally:
         for chunk_path_str in chunk_paths:
             Path(chunk_path_str).unlink(missing_ok=True)
