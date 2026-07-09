@@ -1,0 +1,19 @@
+# TTS container's OWN isolated dependency file.
+# Never share this with backend/pyproject.toml (the CPU-only backend
+# container) — qwen-tts hard-pins exact transformers/accelerate versions
+# that must not leak into or be overridden by the main app's deps.
+#
+# torch/torchaudio's base version comes from the rocm/pytorch base image
+# (see Containerfile.tts) — do NOT `pip install torch` here, that silently
+# installs a CPU/CUDA build and breaks GPU usage (RESEARCH.md Anti-Pattern).
+
+qwen-tts==0.1.1
+transformers==4.57.3
+accelerate==1.12.0
+soundfile
+einops
+onnxruntime
+librosa
+sox
+fastapi==0.139.0
+uvicorn==0.51.0

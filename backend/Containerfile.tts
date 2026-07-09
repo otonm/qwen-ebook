@@ -1,0 +1,36 @@
+# GPU-scoped Qwen3-TTS inference container.
+#
+# This image is the ONLY part of the stack with /dev/kfd + /dev/dri device
+# passthrough (DEPL-01). The CPU-only backend (Containerfile.backend, a
+# later plan) never imports torch/qwen_tts directly and talks to this
+# container over the internal /synthesize HTTP contract instead.
+#
+# Base image already bundles a ROCm-userspace-matched torch build — do NOT
+# `pip install torch` on top of it (RESEARCH.md Anti-Pattern: silently
+# installs a CPU/CUDA build with no error, defeating GPU usage).
+FROM docker.io/rocm/pytorch:rocm7.2.4_ubuntu24.04_py3.12_pytorch_release_2.9.1
+
+WORKDIR /app
+
+# TTS container's own isolated dependency file (never shared with the
+# backend's pyproject.toml — see requirements.txt header comment).
+COPY tts_service/requirements.txt /app/tts_service/requirements.txt
+
+# qwen-tts hard-pins exact transformers/accelerate versions (RESEARCH.md
+# Pitfall 3) — install it with --no-deps first, then the exact pins, so
+# nothing else in requirements.txt can override them via normal resolution.
+RUN pip install --no-cache-dir "qwen-tts==0.1.1" --no-deps \
+    && pip install --no-cache-dir "transformers==4.57.3" "accelerate==1.12.0" \
+    && pip install --no-cache-dir -r /app/tts_service/requirements.txt \
+    && pip install --no-cache-dir torchaudio --index-url https://download.pytorch.org/whl/rocm7.2
+
+# Copy the tts_service package into the image.
+COPY tts_service/ /app/tts_service/
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+ENV TTS_PORT=8001
+
+EXPOSE 8001
+
+CMD ["uvicorn", "tts_service.server:app", "--host", "0.0.0.0", "--port", "8001"]
