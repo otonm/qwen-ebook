@@ -15,6 +15,7 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import Response
 
@@ -66,7 +67,21 @@ async def create_project(file: UploadFile = File(...)):  # noqa: B008 (FastAPI D
 
     chunk_paths: list[str] = []
     for index, chunk_text in enumerate(chunks):
-        chunk_audio = synthesize(chunk_text, settings.TTS_DEFAULT_SPEAKER)
+        # T-03-02: a TTS-container failure/timeout must surface as a clean
+        # HTTP error to the client, not an unhandled 500 or an indefinite
+        # hang. tts_client.synthesize() itself applies bounded httpx
+        # timeouts (Plan 01); this wiring translates the raised client
+        # error into the appropriate gateway status code.
+        try:
+            chunk_audio = synthesize(chunk_text, settings.TTS_DEFAULT_SPEAKER)
+        except httpx.TimeoutException as exc:
+            raise HTTPException(
+                status_code=504, detail="TTS service timed out"
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status_code=502, detail="TTS service unavailable"
+            ) from exc
         chunk_path = upload_dir / f"{project_id}_chunk_{index:04d}.wav"
         chunk_path.write_bytes(chunk_audio)
         chunk_paths.append(str(chunk_path))
