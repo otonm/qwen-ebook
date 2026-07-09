@@ -7,9 +7,9 @@
 
 ### Ingestion
 
-- [ ] **ING-01**: User can upload a plain text (.txt) file as the source for a new project
+- [x] **ING-01**: User can upload a plain text (.txt) file as the source for a new project
 - [ ] **ING-02**: User can upload an EPUB (.epub) file as the source for a new project, with chapter/reading-order text extracted and markup/footnotes stripped
-- [ ] **ING-03**: Long source texts are chunked on natural structural boundaries (chapter/paragraph) for LLM analysis rather than arbitrary token counts
+- [x] **ING-03**: Long source texts are chunked on natural structural boundaries (chapter/paragraph) for LLM analysis rather than arbitrary token counts
 
 ### Cast & Analysis
 
@@ -94,11 +94,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| ING-01 | Phase 1 | Pending |
-| ING-03 | Phase 1 | Pending |
-| GEN-01 | Phase 1 | Pending |
+| ING-01 | Phase 1 | Complete |
+| ING-03 | Phase 1 | Complete |
+| GEN-01 | Phase 1 | Pending (verified via override — see 01-VERIFICATION.md; real GPU synthesis deferred to production RX 9070 XT hardware) |
 | GEN-04 | Phase 1 | Complete |
-| DEPL-01 | Phase 1 | Pending |
+| DEPL-01 | Phase 1 | Pending (verified via override — see 01-VERIFICATION.md; real GPU VM deployment deferred to production RX 9070 XT hardware) |
 | ING-02 | Phase 2 | Pending |
 | CAST-01 | Phase 2 | Pending |
 | CAST-02 | Phase 2 | Pending |
