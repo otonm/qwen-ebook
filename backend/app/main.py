@@ -22,9 +22,11 @@ per-segment audio generation against the reviewed cast (ROADMAP.md).
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from collections.abc import AsyncIterable
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import Response
@@ -38,8 +40,10 @@ from app.config import settings
 from app.db import engine, init_db
 from app.epub_parser import EpubParseError, extract_text
 from app.models import Character, Project, Segment
-from app.tts_client import tts_health
-from app.voices import list_presets
+from app.tts_client import synthesize, tts_health
+from app.voices import best_guess_preset, list_presets
+
+logger = logging.getLogger(__name__)
 
 _READ_CHUNK_SIZE = 1024 * 1024  # 1 MiB
 
@@ -215,8 +219,12 @@ class CharacterPatch(BaseModel):
 
 @app.patch("/characters/{character_id}")
 async def patch_character(character_id: str, patch: CharacterPatch) -> dict:
-    """WIZ-02 rename/edit, WIZ-03 voice assign (persistence only — the eager
-    preview-generation side effect on a voice-field change is Task 2)."""
+    """WIZ-02 rename/edit, WIZ-03 voice assign. A voice-field change
+    (voice_preset and/or voice_instructions present) bumps voice_version
+    and eagerly kicks off race-safe preview generation (WIZ-04/WIZ-05,
+    Pitfall 5) — see _generate_preview."""
+    voice_changed = patch.voice_preset is not None or patch.voice_instructions is not None
+
     with Session(engine) as session:
         character = session.get(Character, character_id)
         if character is None:
@@ -230,11 +238,92 @@ async def patch_character(character_id: str, patch: CharacterPatch) -> dict:
             character.voice_preset = patch.voice_preset
         if patch.voice_instructions is not None:
             character.voice_instructions = patch.voice_instructions
+        if voice_changed:
+            character.voice_version += 1
 
         session.add(character)
         session.commit()
         session.refresh(character)
-        return _serialize_character(character)
+        result = _serialize_character(character)
+        version = character.voice_version
+
+    if voice_changed:
+        task = asyncio.create_task(_generate_preview(character_id, version))
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+
+    return result
+
+
+async def _generate_preview(character_id: str, version: int) -> None:
+    """Synthesize the WIZ-04 intro line for `character_id` and write it as
+    its preview WAV, but ONLY if `character_id`'s voice_version still
+    equals `version` when generation completes (Pitfall 5 last-request-wins
+    race guard) — a newer PATCH landing mid-generation must win, not the
+    generation that happens to finish first.
+    """
+    with Session(engine) as session:
+        character = session.get(Character, character_id)
+        if character is None:
+            return
+        name = character.name
+        description = (character.description or "").strip()
+        # T-02-10/D-17: the actual /synthesize wire contract (Phase 1) only
+        # takes a preset speaker name, no free-text instruct parameter.
+        # # ponytail: when no preset is explicitly chosen, best_guess_preset
+        # resolves the free-text voice_instructions to a preset name instead
+        # — the "free-text steering" this phase ships is pre-fill + best-
+        # guess preset selection, not real per-request instruct-steering
+        # (which Phase 1's TTS surface doesn't support; D-17 explicitly
+        # defers that to VoiceDesign).
+        speaker = character.voice_preset
+        if speaker is None:
+            speaker = best_guess_preset(character.voice_instructions or description) or ""
+
+    intro_line = f"Hi, my name is {name} and I am a {description}."
+
+    try:
+        wav_bytes = await run_in_threadpool(synthesize, intro_line, speaker)
+    except Exception:  # noqa: BLE001 - a failed preview must never crash the background task
+        logger.exception("preview generation failed for character %s", character_id)
+        return
+
+    preview_dir = Path(settings.PREVIEW_DIR)
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    # Server-generated uuid filename — never derived from any client string
+    # (T-02-10).
+    preview_path = preview_dir / f"{uuid.uuid4().hex}.wav"
+    preview_path.write_bytes(wav_bytes)
+
+    with Session(engine) as session:
+        character = session.get(Character, character_id)
+        if character is None or character.voice_version != version:
+            # A newer PATCH landed while this generation was in flight —
+            # discard the now-stale file (Pitfall 5 last-request-wins).
+            preview_path.unlink(missing_ok=True)
+            return
+
+        old_path = character.preview_audio_path
+        character.preview_audio_path = str(preview_path)
+        session.add(character)
+        session.commit()
+
+    if old_path and old_path != str(preview_path):
+        Path(old_path).unlink(missing_ok=True)
+
+
+@app.get("/characters/{character_id}/preview.wav")
+async def get_character_preview(character_id: str) -> Response:
+    with Session(engine) as session:
+        character = session.get(Character, character_id)
+        if character is None:
+            raise HTTPException(status_code=404, detail="Character not found")
+        preview_path = character.preview_audio_path
+
+    if not preview_path or not Path(preview_path).is_file():
+        raise HTTPException(status_code=409, detail="Preview not ready")
+
+    return Response(content=Path(preview_path).read_bytes(), media_type="audio/wav")
 
 
 class MergeRequest(BaseModel):

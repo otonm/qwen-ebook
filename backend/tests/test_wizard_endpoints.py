@@ -20,7 +20,16 @@ from app.db import init_db  # noqa: E402
 from app.main import app  # noqa: E402
 
 init_db()
+# Enter the TestClient's context (rather than the bare `TestClient(app)`
+# other test modules use) so a single portal/event loop persists across
+# every call in this module — needed here (unlike the other test modules)
+# because eager preview generation is a fire-and-forget asyncio task that
+# does a genuine cross-thread run_in_threadpool() hop; a fresh portal spun
+# up per call (the bare-TestClient default) tears its loop down the moment
+# each request returns, orphaning that task before the threadpool hop ever
+# completes.
 client = TestClient(app)
+client.__enter__()
 
 # Mock analyze() always returns exactly two characters ("Narrator" +
 # "Alex") for a >=3-paragraph text — see app/analysis_client.py
