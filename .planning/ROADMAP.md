@@ -52,19 +52,19 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. In a review wizard interface, the user can rename, merge, or edit the description of any suggested character, and assign each character a voice — either a preset voice or free-text voice instructions derived from its inferred description
   5. For each character, the user can play/pause an instant preview of their assigned voice, pre-generated automatically as soon as the voice is assigned (not generated on click)
 
-**Plans**: 1/5 plans executed
+**Plans**: 4/5 plans executed
 **Wave 1**
 
   - [x] 02-01-PLAN.md — Persistence + mock analysis pipeline: upload .txt → background analysis → cast+segments in SQLite, retrievable via API + SSE (CAST-01/CAST-03/WIZ-01)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-  - [ ] 02-02-PLAN.md — EPUB ingestion: spine-order extraction, footnote strip, non-narrative skip, fail-fast (ING-02)
-  - [ ] 02-03-PLAN.md — Real Grok analysis + system prompt + multi-chunk cross-chunk cast reconciliation (CAST-01/CAST-02/CAST-03)
+  - [x] 02-02-PLAN.md — EPUB ingestion: spine-order extraction, footnote strip, non-narrative skip, fail-fast (ING-02)
+  - [x] 02-03-PLAN.md — Real Grok analysis + system prompt + multi-chunk cross-chunk cast reconciliation (CAST-01/CAST-02/CAST-03)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-  - [ ] 02-04-PLAN.md — Wizard backend: character edit/merge, preset voices, eager race-safe voice preview (WIZ-02..05)
+  - [x] 02-04-PLAN.md — Wizard backend: character edit/merge, preset voices, eager race-safe voice preview (WIZ-02..05)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -97,5 +97,5 @@ Phases execute in numeric order: 1 → 2 → 3
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Upload-to-Audio Spike (TTS/ROCm De-risk) | 3/3 | Complete   | 2026-07-09 |
-| 2. LLM Cast Detection & Review Wizard | 1/5 | In Progress|  |
+| 2. LLM Cast Detection & Review Wizard | 4/5 | In Progress|  |
 | 3. Editable Table, Full Generation Pipeline, Persistence & Deployment | 0/TBD | Not started | - |
