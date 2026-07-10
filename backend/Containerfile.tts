@@ -12,6 +12,13 @@ FROM docker.io/rocm/pytorch:rocm7.2.4_ubuntu24.04_py3.12_pytorch_release_2.9.1
 
 WORKDIR /app
 
+# qwen-tts's tokenizer (core/tokenizer_25hz/vq/speech_vq.py) imports the
+# `sox` PyPI wrapper, which itself shells out to the system `sox` binary —
+# neither is installed by qwen-tts's own (--no-deps'd) dependencies, so both
+# have to be provided here.
+RUN apt-get update && apt-get install -y --no-install-recommends sox \
+    && rm -rf /var/lib/apt/lists/*
+
 # TTS container's own isolated dependency file (never shared with the
 # backend's pyproject.toml — see requirements.txt header comment).
 COPY tts_service/requirements.txt /app/tts_service/requirements.txt

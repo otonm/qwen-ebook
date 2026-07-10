@@ -23,6 +23,11 @@ onnxruntime
 librosa
 fastapi==0.139.0
 uvicorn==0.51.0
-# IN-03: `sox` (PyPI wrapper) was listed here but never imported by
-# tts_service/model.py or tts_service/server.py, and Containerfile.tts never
-# installs the underlying `sox` system binary it wraps — dead weight, removed.
+# Reverts IN-03: `sox` looked unused (never imported by tts_service/model.py
+# or tts_service/server.py) but qwen-tts's own tokenizer imports it
+# transitively (core/tokenizer_25hz/vq/speech_vq.py) — installing qwen-tts
+# with --no-deps means this has to be listed explicitly. Confirmed via a
+# real GPU run on the production VM: startup crashed with
+# `ModuleNotFoundError: No module named 'sox'` without this line.
+# Containerfile.tts also installs the system `sox` binary this wraps.
+sox
