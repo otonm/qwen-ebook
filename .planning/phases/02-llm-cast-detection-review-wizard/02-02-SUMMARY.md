@@ -197,3 +197,13 @@ None - no external service configuration required.
 ---
 *Phase: 02-llm-cast-detection-review-wizard*
 *Completed: 2026-07-10*
+
+## Self-Check: PASSED
+
+- FOUND: backend/app/epub_parser.py
+- FOUND: backend/tests/test_epub_parser.py
+- FOUND: backend/tests/fixtures/epub_builder.py
+- FOUND: backend/tests/fixtures/__init__.py
+- FOUND: a6a37a7 (test commit)
+- FOUND: cfa54da (feat commit)
+- FOUND: 66bd4ea (docs/summary commit)
