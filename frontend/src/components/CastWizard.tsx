@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react"
 
 import { getVoices, type Character, type Segment, type VoicePreset } from "@/api/client"
 import { CharacterCard } from "@/components/CharacterCard"
+import { SegmentPreview } from "@/components/SegmentPreview"
 import { refreshProject } from "@/hooks/useAnalysisStream"
 
 interface CastWizardProps {
@@ -59,17 +60,7 @@ export function CastWizard({ projectId, initialCast, initialSegments }: CastWiza
         </div>
 
         <div className="flex-1 xl:max-w-md">
-          <h2 className="mb-3 text-lg font-semibold">Segments</h2>
-          <ul className="flex flex-col gap-2 text-sm">
-            {segments.map((segment) => (
-              <li key={segment.id} className="rounded-md bg-secondary p-2">
-                <span className="font-semibold">
-                  {segment.character_name ?? "Unknown"}:
-                </span>{" "}
-                {segment.text}
-              </li>
-            ))}
-          </ul>
+          <SegmentPreview segments={segments} />
         </div>
       </div>
     </div>
