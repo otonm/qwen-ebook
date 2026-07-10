@@ -24,20 +24,16 @@ Then:
 curl -F file=@sample.txt http://127.0.0.1:8000/projects -o audiobook.wav
 ```
 
-**Use `127.0.0.1`, not `localhost`.** On this host, rootless Podman's
-`pasta` port-forwarding correctly forwards IPv4 loopback (`127.0.0.1`) but
-resets IPv6 loopback (`::1`) connections, and `localhost` resolves to
-`::1` first on most systems — `curl http://localhost:8000/...` reproducibly
-fails with "Recv failure: Connection reset by peer" here even though the
-backend is healthy and reachable on `127.0.0.1`. This is a host
-networking-stack quirk, not an application bug (confirmed via
-`podman exec qwen-ebook-backend ...` returning 200 for the same request
-made from inside the pod network namespace).
+**Use `127.0.0.1`, not `localhost`.** This was originally observed as a
+rootless-Podman `pasta` port-forwarding quirk (IPv4 loopback forwarded
+correctly, IPv6 `::1` reset) on the gfx1103 dev host; `run-local.sh` now
+runs rootful by default (see below), but `127.0.0.1` remains the safe
+default either way.
 
 Tear down:
 
 ```bash
-podman pod rm -f qwen-ebook
+sudo podman pod rm -f qwen-ebook
 ```
 
 ## Two-container isolation (DEPL-01)
@@ -56,8 +52,8 @@ which does not reflect `--device`-passed devices in its JSON output even
 though the devices are genuinely present/absent inside the container):
 
 ```bash
-podman exec qwen-ebook-tts     ls /dev/kfd /dev/dri   # -> present
-podman exec qwen-ebook-backend ls /dev/kfd /dev/dri   # -> "No such file or directory"
+sudo podman exec qwen-ebook-tts     ls /dev/kfd /dev/dri   # -> present
+sudo podman exec qwen-ebook-backend ls /dev/kfd /dev/dri   # -> "No such file or directory"
 ```
 
 Only port `8000` (the backend) is reachable from the host. Port `8001` (the
@@ -68,17 +64,14 @@ connect (T-03-01: the GPU service is unreachable except via the backend).
 ## Why `run-local.sh` instead of `podman kube play deploy/qwen-ebook-pod.yaml`
 
 `deploy/qwen-ebook-pod.yaml` documents the pod topology (images, ports, env
-vars, device mounts) as a Kubernetes-style manifest. However, this host's
-proven-working GPU passthrough configuration (see
-`backend/GPU-ENABLEMENT.md`) requires `--group-add keep-groups`, which has
-no equivalent field in plain Kubernetes Pod YAML / `podman kube play`.
-`podman run --pod` supports `--group-add` directly, so `run-local.sh` uses
-`podman pod create` + two `podman run --pod` invocations instead of
-`podman kube play` on this host. The YAML remains the canonical reference
-for the topology and is usable with `podman kube play` on a host where
-`--group-add keep-groups` isn't required (e.g. once the host's
-`container_use_devices` SELinux boolean is enabled — see
-`backend/GPU-ENABLEMENT.md`'s tracked follow-up).
+vars, device mounts) as a Kubernetes-style manifest. `run-local.sh` instead
+uses `podman pod create` + two `podman run --pod` invocations, run rootful
+(`sudo podman`) with `--user 0:0` on the `tts` container — the flag
+combination D-09 verification found necessary for real `/dev/kfd` access
+(see "Production VM bring-up" below; rootless `--group-add keep-groups`
+was tried first and does not grant device access on this Podman/crun
+combination, independent of GPU architecture). The YAML remains the
+canonical reference for the topology.
 
 ## Known limitation on this dev host (accepted, not a bug)
 
@@ -130,23 +123,32 @@ runs them, since both need interactive input):
 
 ### D-09 GPU re-verification checklist
 
-This entire local run (and `run-local.sh`'s GPU flags) was performed and
-verified against a `gfx1103` integrated GPU that is not on ROCm's
-officially supported architecture list — see `backend/GPU-ENABLEMENT.md`
-for the full historical gfx1103 fallback-ladder investigation log. Before
-relying on this deployment in production, on the RX 9070 XT VM:
+This entire local run (and `run-local.sh`'s GPU flags) was originally
+performed and verified against a `gfx1103` integrated GPU that is not on
+ROCm's officially supported architecture list — see
+`backend/GPU-ENABLEMENT.md` for the full historical gfx1103 fallback-ladder
+investigation log. Re-verified directly on the production RX 9070 XT VM:
 
-1. Run `bash deploy/run-local.sh` from scratch with **no** GPU-flag env
-   vars set (`GPU_SECURITY_OPT` and `HSA_OVERRIDE_GFX_VERSION` unset) —
-   `gfx1201` is officially supported, so neither dev-host workaround is
-   expected to be needed.
-2. Confirm a real `POST /projects` (or `/synthesize`) request returns
-   audible, intelligible synthesized audio end-to-end (the actual
-   GEN-01/DEPL-01 audio-output bar that the `gfx1103` dev host's GPU could
-   not clear).
-3. Only if a genuine failure is reproduced, fall back by exporting
-   `HSA_OVERRIDE_GFX_VERSION` and/or `GPU_SECURITY_OPT` (e.g. `label=disable`)
-   — do not pre-emptively carry the dev-host workarounds over.
+1. ✅ `rocminfo` and a real on-device PyTorch matmul (`backend/tts_service/smoke_gpu.py`)
+   both pass with `gfx1201` correctly identified as `AMD Radeon RX 9070 XT`
+   — **no** `HSA_OVERRIDE_GFX_VERSION` or `GPU_SECURITY_OPT` needed, confirming
+   gfx1201's official ROCm support means neither dev-host workaround applies
+   here. Host stayed stable throughout (no `amdgpu`/`kfd` resets).
+2. ❌ Rootless Podman (`--group-add keep-groups`, with or without
+   `--privileged`, with or without explicit numeric `--group-add`) could
+   **not** reach `/dev/kfd` on this host — the render/video host GIDs are
+   lost in the rootless user-namespace mapping regardless of host group
+   membership. This is a Podman/crun-level gap, not GPU-architecture-specific.
+3. ✅ Rootful Podman (`sudo podman run --user 0:0 --device /dev/kfd --device /dev/dri`)
+   works cleanly. `run-local.sh` now runs rootful by default (see above).
+4. ✅ `POST /projects` through the full pod (rootful, `--user 0:0` TTS
+   container) returns a real WAV: mono, 24kHz, 21.4s for a 3-sentence
+   sample, 96.5% non-zero samples, max amplitude 22528/32768 — not silence
+   or a placeholder. This also surfaced and fixed a real bug: `qwen-tts`'s
+   tokenizer imports the `sox` PyPI wrapper (plus the system `sox` binary
+   it shells out to) transitively — neither was installed (a prior decision,
+   `IN-03`, had removed `sox` believing it unused by this project's own
+   code). Both are now installed in `Containerfile.tts`/`requirements.txt`.
 
-This is a tracked follow-up gate, not part of this phase's success bar
-(01-SKELETON.md "Follow-up Gate").
+Tracked follow-up gate, not part of this phase's success bar (01-SKELETON.md
+"Follow-up Gate") — all four items now closed.

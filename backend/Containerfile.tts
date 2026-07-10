@@ -31,16 +31,20 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 ENV TTS_PORT=8001
 
-# WR-05: run as non-root. GPU device access is via group membership on
-# /dev/kfd + /dev/dri, not root — deploy/run-local.sh already grants that
-# via `--group-add keep-groups`, which maps host supplementary groups in
-# regardless of which user the container process runs as. Reuse the base
-# rocm/pytorch image's existing UID-1000 `ubuntu` user (Ubuntu 24.04 base
-# images ship one by default) rather than creating a fresh one that would
-# collide on UID 1000. The Hugging Face model cache defaults to
-# $HOME/.cache/huggingface, which a non-root user can't write under /root,
-# so HOME moves to this user's own home (deploy/run-local.sh's cache volume
-# mount is updated to match).
+# Default to the base rocm/pytorch image's existing UID-1000 `ubuntu` user
+# (Ubuntu 24.04 base images ship one by default) rather than creating a
+# fresh one that would collide on UID 1000. The Hugging Face model cache
+# defaults to $HOME/.cache/huggingface, which a non-root user can't write
+# under /root, so HOME moves to this user's own home (deploy/run-local.sh's
+# cache volume mount is updated to match).
+#
+# D-09: this USER is overridden to root (`--user 0:0`) at `podman run` time
+# by deploy/run-local.sh. Rootless `--group-add keep-groups` (the original
+# WR-05 plan for non-root GPU access) was verified NOT to grant real
+# /dev/kfd access on the production host's Podman/crun combination — the
+# host's render/video GIDs get lost in the rootless user-namespace mapping
+# regardless of group membership. Root inside a rootful container sidesteps
+# that mapping entirely. See deploy/README.md's D-09 checklist.
 RUN chown -R ubuntu:ubuntu /app
 ENV HOME=/home/ubuntu
 USER ubuntu
