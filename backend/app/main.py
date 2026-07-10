@@ -387,6 +387,8 @@ async def merge_character(character_id: str, body: MergeRequest) -> dict:
         if source is None or target is None or source.project_id != target.project_id:
             raise HTTPException(status_code=404, detail="Character not found")
 
+        source_preview_path = source.preview_audio_path
+
         segments = list(
             session.exec(select(Segment).where(Segment.character_id == source_id)).all()
         )
@@ -403,5 +405,12 @@ async def merge_character(character_id: str, body: MergeRequest) -> dict:
         )
         result = _serialize_character(target)
         result["segment_count"] = segment_count
+
+    # WR-05: the merged-away source's preview WAV is no longer referenced
+    # by any row — clean it up from disk same as _generate_preview's own
+    # stale-preview cleanup, or every merge leaks one file under
+    # PREVIEW_DIR.
+    if source_preview_path:
+        Path(source_preview_path).unlink(missing_ok=True)
 
     return result
