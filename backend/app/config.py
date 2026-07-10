@@ -49,6 +49,7 @@ class Settings:
     OUTPUT_FORMAT: str
     UPLOAD_DIR: str
     OUTPUT_DIR: str
+    PREVIEW_DIR: str
     LLM_BACKEND: str
     XAI_API_KEY: str
     GROK_MODEL: str
@@ -64,6 +65,8 @@ def load_settings() -> Settings:
             f"must be one of {sorted(_ALLOWED_OUTPUT_FORMATS)}"
         )
 
+    output_dir = os.environ.get("OUTPUT_DIR", _DEFAULT_OUTPUT_DIR)
+
     return Settings(
         TTS_BACKEND=os.environ.get("TTS_BACKEND", "mock"),
         TTS_SERVICE_URL=os.environ.get("TTS_SERVICE_URL", "http://localhost:8001"),
@@ -72,7 +75,8 @@ def load_settings() -> Settings:
         MAX_UPLOAD_BYTES=_env_int("MAX_UPLOAD_BYTES", 10 * 1024 * 1024),
         OUTPUT_FORMAT=output_format,
         UPLOAD_DIR=os.environ.get("UPLOAD_DIR", _DEFAULT_UPLOAD_DIR),
-        OUTPUT_DIR=os.environ.get("OUTPUT_DIR", _DEFAULT_OUTPUT_DIR),
+        OUTPUT_DIR=output_dir,
+        PREVIEW_DIR=os.environ.get("PREVIEW_DIR", f"{output_dir}/previews"),
         LLM_BACKEND=os.environ.get("LLM_BACKEND", "mock"),
         XAI_API_KEY=os.environ.get("XAI_API_KEY", ""),
         GROK_MODEL=os.environ.get("GROK_MODEL", "grok-4.3"),

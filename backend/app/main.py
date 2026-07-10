@@ -29,6 +29,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import Response
 from fastapi.sse import EventSourceResponse, ServerSentEvent
+from pydantic import BaseModel
 from sqlmodel import Session, select
 from starlette.concurrency import run_in_threadpool
 
@@ -38,6 +39,7 @@ from app.db import engine, init_db
 from app.epub_parser import EpubParseError, extract_text
 from app.models import Character, Project, Segment
 from app.tts_client import tts_health
+from app.voices import list_presets
 
 _READ_CHUNK_SIZE = 1024 * 1024  # 1 MiB
 
@@ -136,6 +138,18 @@ async def create_project(file: UploadFile = File(...)):  # noqa: B008 (FastAPI D
     return {"id": project_id, "status": "analyzing"}
 
 
+def _serialize_character(character: Character) -> dict:
+    return {
+        "id": character.id,
+        "name": character.name,
+        "description": character.description,
+        "is_narrator": character.is_narrator,
+        "voice_preset": character.voice_preset,
+        "voice_instructions": character.voice_instructions,
+        "preview_audio_path": character.preview_audio_path,
+    }
+
+
 def _serialize_project(
     project: Project, characters: list[Character], segments: list[Segment]
 ) -> dict:
@@ -145,18 +159,7 @@ def _serialize_project(
         "filename": project.filename,
         "status": project.status,
         "error_detail": project.error_detail,
-        "characters": [
-            {
-                "id": character.id,
-                "name": character.name,
-                "description": character.description,
-                "is_narrator": character.is_narrator,
-                "voice_preset": character.voice_preset,
-                "voice_instructions": character.voice_instructions,
-                "preview_audio_path": character.preview_audio_path,
-            }
-            for character in characters
-        ],
+        "characters": [_serialize_character(character) for character in characters],
         "segments": [
             {
                 "id": segment.id,
@@ -195,3 +198,80 @@ async def get_project(project_id: str):
 async def analysis_stream(project_id: str) -> AsyncIterable[ServerSentEvent]:
     async for event_type, payload in progress_events(project_id):
         yield ServerSentEvent(data=payload, event=event_type)
+
+
+@app.get("/voices")
+async def get_voices() -> list[dict]:
+    """WIZ-03: the wizard's preset voice picker list."""
+    return list_presets()
+
+
+class CharacterPatch(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    voice_preset: str | None = None
+    voice_instructions: str | None = None
+
+
+@app.patch("/characters/{character_id}")
+async def patch_character(character_id: str, patch: CharacterPatch) -> dict:
+    """WIZ-02 rename/edit, WIZ-03 voice assign (persistence only — the eager
+    preview-generation side effect on a voice-field change is Task 2)."""
+    with Session(engine) as session:
+        character = session.get(Character, character_id)
+        if character is None:
+            raise HTTPException(status_code=404, detail="Character not found")
+
+        if patch.name is not None:
+            character.name = patch.name
+        if patch.description is not None:
+            character.description = patch.description
+        if patch.voice_preset is not None:
+            character.voice_preset = patch.voice_preset
+        if patch.voice_instructions is not None:
+            character.voice_instructions = patch.voice_instructions
+
+        session.add(character)
+        session.commit()
+        session.refresh(character)
+        return _serialize_character(character)
+
+
+class MergeRequest(BaseModel):
+    target_id: str
+
+
+@app.post("/characters/{character_id}/merge")
+async def merge_character(character_id: str, body: MergeRequest) -> dict:
+    """WIZ-02 merge: reassign source's segments to target, delete source.
+
+    Explicit two-chosen-ids user action — no fuzzy character matching.
+    """
+    source_id, target_id = character_id, body.target_id
+    if source_id == target_id:
+        raise HTTPException(status_code=400, detail="Cannot merge a character into itself")
+
+    with Session(engine) as session:
+        source = session.get(Character, source_id)
+        target = session.get(Character, target_id)
+        if source is None or target is None or source.project_id != target.project_id:
+            raise HTTPException(status_code=404, detail="Character not found")
+
+        segments = list(
+            session.exec(select(Segment).where(Segment.character_id == source_id)).all()
+        )
+        for segment in segments:
+            segment.character_id = target_id
+            session.add(segment)
+
+        session.delete(source)
+        session.commit()
+        session.refresh(target)
+
+        segment_count = len(
+            session.exec(select(Segment).where(Segment.character_id == target_id)).all()
+        )
+        result = _serialize_character(target)
+        result["segment_count"] = segment_count
+
+    return result

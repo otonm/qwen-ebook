@@ -27,6 +27,11 @@ class Character(SQLModel, table=True):
     voice_preset: str | None = None
     voice_instructions: str
     preview_audio_path: str | None = None
+    # Bumped on every PATCH that changes voice_preset/voice_instructions;
+    # eager preview generation (Plan 02-04, Pitfall 5) only writes
+    # preview_audio_path back if this still matches the version it started
+    # with — last-request-wins under rapid re-assignment.
+    voice_version: int = 0
 
 
 class Segment(SQLModel, table=True):
