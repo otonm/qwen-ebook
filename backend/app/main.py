@@ -28,14 +28,14 @@ from collections.abc import AsyncIterable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import Response
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel
 from sqlmodel import Session, select
 from starlette.concurrency import run_in_threadpool
 
-from app.analysis_worker import progress_events, run_analysis
+from app.analysis_worker import has_pending_queue, progress_events, run_analysis
 from app.config import settings
 from app.db import engine, init_db
 from app.epub_parser import EpubParseError, extract_text
@@ -198,8 +198,45 @@ async def get_project(project_id: str):
         return _serialize_project(project, characters, segments)
 
 
+async def _require_project_exists(project_id: str) -> None:
+    """404 guard for `analysis_stream` (WR-02).
+
+    Deliberately a FastAPI dependency, not a check inside the endpoint
+    body: `analysis_stream` is an async-generator path operation (SSE), and
+    raising HTTPException from inside such a generator is swallowed by the
+    SSE producer's task group instead of becoming a clean HTTP error
+    response — a dependency runs (and can fail) before the generator is
+    ever entered, so it's the only place this 404 works correctly.
+    """
+    with Session(engine) as session:
+        if session.get(Project, project_id) is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+
 @app.get("/projects/{project_id}/analysis-stream", response_class=EventSourceResponse)
-async def analysis_stream(project_id: str) -> AsyncIterable[ServerSentEvent]:
+async def analysis_stream(
+    project_id: str, _exists: None = Depends(_require_project_exists)
+) -> AsyncIterable[ServerSentEvent]:
+    # WR-02: if analysis already finished *and* its terminal event was
+    # already drained by an earlier subscriber (no pending queue left),
+    # serve the current state directly instead of blocking forever on a
+    # fresh, permanently-empty queue — this is also what previously leaked
+    # a Queue entry in analysis_worker._progress_queues for the life of the
+    # process. A still-pending queue (analysis just finished but nobody's
+    # consumed the buffered events yet) is drained normally below so early
+    # progress events aren't skipped.
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        status = project.status
+        error_detail = project.error_detail
+
+    if status in ("ready", "error") and not has_pending_queue(project_id):
+        if status == "ready":
+            yield ServerSentEvent(data={"status": "ready"}, event="done")
+        else:
+            yield ServerSentEvent(data={"detail": error_detail}, event="error")
+        return
+
     async for event_type, payload in progress_events(project_id):
         yield ServerSentEvent(data=payload, event=event_type)
 

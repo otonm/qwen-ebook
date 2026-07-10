@@ -38,6 +38,16 @@ def _get_queue(project_id: str) -> asyncio.Queue:
     return _progress_queues.setdefault(project_id, asyncio.Queue())
 
 
+def has_pending_queue(project_id: str) -> bool:
+    """True if `project_id` still has a live progress queue — i.e. its
+    terminal ("done"/"error") event hasn't been drained yet (WR-02). Used
+    by the SSE endpoint to tell "analysis finished, but nobody's consumed
+    the buffered events yet" apart from "already fully drained by an
+    earlier subscriber" without creating a fresh (permanently empty) queue
+    as a side effect."""
+    return project_id in _progress_queues
+
+
 async def progress_events(project_id: str) -> AsyncIterator[tuple[str, dict]]:
     """Drain `project_id`'s progress queue until a terminal event, per the
     SSE endpoint in main.py."""
