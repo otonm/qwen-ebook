@@ -140,9 +140,8 @@ def _persist_result(
             # LLM prompt-adherence regression leaves a trace instead of
             # silently losing narration/dialogue with no way to diagnose it.
             logger.warning(
-                "project %s: dropping segment for unknown character_name %r",
-                project_id,
-                suggestion.character_name,
+                f"project {project_id}: dropping segment for unknown "
+                f"character_name {suggestion.character_name!r}"
             )
             continue
         session.add(
@@ -207,7 +206,7 @@ async def run_analysis(project_id: str) -> None:
 
         await queue.put(("progress", {"stage": "estimating"}))
         token_count = estimate_tokens(text)
-        logger.info("project %s estimated at %d tokens", project_id, token_count)
+        logger.info(f"project {project_id} estimated at {token_count} tokens")
 
         if _should_chunk(text):
             await _run_chunked_analysis(project_id, text, queue)

@@ -91,7 +91,11 @@ async def _read_upload_bounded(file: UploadFile, max_bytes: int) -> bytes:
 
 
 @app.post("/projects", status_code=201)
-async def create_project(file: UploadFile = File(...)):  # noqa: B008 (FastAPI DI pattern)
+# FastAPI's dependency-injection parsing requires `File(...)` as a literal
+# default; the call is never actually "reused at definition time" the way
+# B008 warns about — FastAPI resolves it per-request. Framework requirement,
+# not a mistake — see CLAUDE.md Conventions.
+async def create_project(file: UploadFile = File(...)):  # noqa: B008
     # T-02-04 (zip-bomb): the bounded read below must run — and reject an
     # oversized *compressed* upload — before extract_text ever calls
     # epub.read_epub, which is the point decompression happens.
@@ -325,8 +329,11 @@ async def _generate_preview(character_id: str, version: int) -> None:
 
     try:
         wav_bytes = await run_in_threadpool(synthesize, intro_line, speaker)
-    except Exception:  # noqa: BLE001 - a failed preview must never crash the background task
-        logger.exception("preview generation failed for character %s", character_id)
+    except Exception:
+        # Broad catch is deliberate: this runs as a fire-and-forget background
+        # task (asyncio.create_task) with no caller to propagate to — a failed
+        # preview must never crash the task or take down the event loop.
+        logger.exception(f"preview generation failed for character {character_id}")
         return
 
     preview_dir = Path(settings.PREVIEW_DIR)

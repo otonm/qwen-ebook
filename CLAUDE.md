@@ -65,3 +65,28 @@ user rather than deciding it here.
   `backend/pyproject.toml`). Apply `--fix` for auto-fixable issues, then fix
   any remaining warnings manually before committing — do not commit with
   outstanding ruff warnings.
+- **No `noqa` directives (strict, non-test code only):** Fix the underlying
+  issue instead of suppressing it. A `# noqa` is only acceptable when the
+  flagged pattern is unavoidable and explicitly required by a framework or by
+  another rule already written down in this file (e.g. FastAPI's
+  `File(...)`/`Depends(...)` default-argument pattern, which needs
+  `# noqa: B008`). Every surviving `noqa` MUST carry an inline or preceding
+  comment explaining *why* it's required — not just what it suppresses. When
+  fixing ruff warnings, actually resolve them; do not reach for `noqa` as the
+  first move. **Exception: test files** (`backend/tests/`) may use `noqa`
+  freely (e.g. `E402` for the `os.environ.setdefault(...)` → import ordering
+  pattern needed to set env vars before app imports) — test ergonomics don't
+  need the same justification bar as shipped code.
+- **Logging (required):** Use the `logging` module for all error reporting
+  and debugging output — never `print()`. Get a module-level logger via
+  `logger = logging.getLogger(__name__)`. Broad `except Exception` blocks are
+  only acceptable in "must never crash" contexts (background tasks, server
+  loops) and MUST call `logger.exception(...)` (or `logger.error(...)` with
+  the full context) so failures leave a diagnosable trace instead of failing
+  silently.
+- **F-strings (required):** Always use f-strings for string interpolation,
+  including inside logging calls (e.g. `logger.info(f"project {project_id}
+  estimated at {token_count} tokens")`, not the %-style lazy-arg form).
+  This is a deliberate simplicity-over-micro-optimization choice — the
+  formatting-cost argument for %-style logging args doesn't matter at this
+  project's scale (single user, no high-frequency hot-path logging).
