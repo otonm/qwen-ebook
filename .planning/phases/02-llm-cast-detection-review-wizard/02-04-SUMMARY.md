@@ -171,3 +171,7 @@ None — no external service configuration required.
 ---
 *Phase: 02-llm-cast-detection-review-wizard*
 *Completed: 2026-07-10*
+
+## Self-Check: PASSED
+
+All created files and all commit hashes referenced in this summary were verified present on disk / in `git log --oneline --all`.
