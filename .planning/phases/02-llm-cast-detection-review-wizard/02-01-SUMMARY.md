@@ -188,3 +188,7 @@ None - no external service configuration required (LLM_BACKEND defaults to "mock
 ---
 *Phase: 02-llm-cast-detection-review-wizard*
 *Completed: 2026-07-10*
+
+## Self-Check: PASSED
+
+All created files verified present on disk (`backend/app/db.py`, `models.py`, `schemas.py`, `analysis_client.py`, `token_estimate.py`, `analysis_worker.py`, `backend/tests/test_analysis_pipeline.py`, this SUMMARY.md). All task commit hashes (`3bf67e6`, `7df937a`, `1bbf580`) verified present in `git log`.
