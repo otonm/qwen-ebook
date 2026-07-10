@@ -100,17 +100,18 @@ def test_analysis_stream_emits_progress_then_done():
     assert events[-1] == "done"
 
 
-def test_mock_backend_never_imports_xai_sdk(monkeypatch):
-    import sys
+def test_mock_backend_never_calls_openrouter(monkeypatch):
+    from app import analysis_client
 
-    monkeypatch.delitem(sys.modules, "xai_sdk", raising=False)
+    def _fail_if_constructed(*args, **kwargs):
+        raise AssertionError("LLM_BACKEND=mock must never construct an OpenRouter HTTP client")
+
+    monkeypatch.setattr(analysis_client.httpx, "AsyncClient", _fail_if_constructed)
 
     files = {"file": ("sample.txt", SAMPLE_TEXT.encode("utf-8"), "text/plain")}
     create_response = client.post("/projects", files=files)
     project_id = create_response.json()["id"]
-    _wait_for_ready(project_id)
-
-    assert "xai_sdk" not in sys.modules
+    _wait_for_ready(project_id)  # would raise via the monkeypatch above if _real_analyze ran
 
 
 def test_new_characters_default_voice_instructions_from_description():

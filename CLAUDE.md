@@ -3,7 +3,7 @@
 
 **Qwen Ebook Narrator**
 
-A self-hosted web app that turns long text (ebooks, articles) into a multi-voice narrated audiobook using Qwen TTS. An LLM (xAI/Grok) analyzes the source text, auto-detects the cast of characters (narrator plus speaking characters, inferred from context — names, ages, personalities), and splits the text into narration/dialogue segments with per-segment voice instructions. The user reviews and edits everything in a spreadsheet-like table before generating and joining the final audio file. Built for personal use: converting owned text into audio for commute/workout listening.
+A self-hosted web app that turns long text (ebooks, articles) into a multi-voice narrated audiobook using Qwen TTS. An LLM (accessed via OpenRouter) analyzes the source text, auto-detects the cast of characters (narrator plus speaking characters, inferred from context — names, ages, personalities), and splits the text into narration/dialogue segments with per-segment voice instructions. The user reviews and edits everything in a spreadsheet-like table before generating and joining the final audio file. Built for personal use: converting owned text into audio for commute/workout listening.
 
 **Core Value:** Given a long text, produce a natural-sounding, multi-character narrated audio file with minimal manual editing — the LLM does the heavy lifting of casting and segmenting, the user just fine-tunes.
 
@@ -12,7 +12,7 @@ A self-hosted web app that turns long text (ebooks, articles) into a multi-voice
 - **Hardware**: Deployment GPU is AMD RX 9070 XT, 16GB VRAM — Qwen TTS inference must run under ROCm within that VRAM budget.
 - **Deployment**: Must run via Podman (not Docker) on the target VM.
 - **Network**: Served as a Tailscale service — no public internet exposure, single trusted user/network.
-- **External APIs**: Depends on xAI Grok API availability/cost for text analysis; Qwen TTS is self-hosted so no per-request cloud TTS cost, but requires GPU inference infrastructure in the container.
+- **External APIs**: Depends on OpenRouter (LLM gateway) availability/cost for text analysis; Qwen TTS is self-hosted so no per-request cloud TTS cost, but requires GPU inference infrastructure in the container.
 - **Persistence**: Single-user with saved projects — needs some form of local storage (files/DB) for project state (text, cast, segments, generated audio), no multi-tenant data model needed.
 <!-- GSD:project-end -->
 
@@ -31,9 +31,9 @@ in `.planning/` (`research/STACK.md`).
 | TTS runtime | `qwen-tts` pip pkg on `transformers`, `attn_implementation="sdpa"` | Pin exact versions — new, fast-moving package. |
 | GPU runtime | PyTorch ROCm 7.2 build (`gfx1201` / RX 9070 XT) | Match container ROCm family to host driver. |
 | Language | Python 3.12 | |
-| Backend | FastAPI (>=0.135 for native SSE) | One process owns upload, Grok calls, EPUB parse, TTS queue, ffmpeg join, SQLite. |
+| Backend | FastAPI (>=0.135 for native SSE) | One process owns upload, LLM calls, EPUB parse, TTS queue, ffmpeg join, SQLite. |
 | Persistence | SQLModel + one SQLite `projects.db` | `Project`/`Character`/`Segment` tables; audio referenced by path, not blobbed. |
-| LLM | `xai-sdk` (AsyncClient), Grok `grok-4.3`, Pydantic structured output | One shared Pydantic schema across LLM output, DB, and API. |
+| LLM | OpenRouter (`httpx`, no provider SDK), default model `x-ai/grok-4.3`, JSON-schema structured output | `OPENROUTER_API_KEY`/`OPENROUTER_MODEL` env vars; one shared Pydantic schema across LLM output, DB, and API. Model is swappable — OpenRouter routes to any of its supported models. |
 | EPUB parse | `ebooklib` + `beautifulsoup4` + `lxml` (`recover=True`) | Filter by reading order; expect malformed XHTML. |
 | Audio join | system `ffmpeg` via `subprocess`, concat demuxer | Not the concat filter, not pydub. |
 | Progress push | `fastapi.sse.EventSourceResponse` | One-way server->client; not WebSockets. |

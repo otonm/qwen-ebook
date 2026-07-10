@@ -13,7 +13,7 @@
 
 ### Cast & Analysis
 
-- [ ] **CAST-01**: Uploaded text is analyzed by the xAI Grok API, which detects the cast of speaking characters (including the narrator) and infers descriptive traits (age, gender, personality) from context
+- [ ] **CAST-01**: Uploaded text is analyzed by an LLM accessed via OpenRouter (default model `x-ai/grok-4.3`), which detects the cast of speaking characters (including the narrator) and infers descriptive traits (age, gender, personality) from context
 - [ ] **CAST-02**: For long texts requiring multi-chunk analysis, the running resolved cast list is re-supplied as context to each subsequent chunk to minimize duplicate/renamed characters
 - [ ] **CAST-03**: Text is split into ordered narration/dialogue segments, each tagged with a suggested speaker and per-segment voice instructions (e.g. "narrates in a soothing voice", "gaining confidence")
 
@@ -62,7 +62,7 @@ Deferred to future release. Tracked but not in current roadmap.
 
 ### Enhancements
 
-- **ENH-01**: Cost/usage visibility for the LLM (Grok) analysis step — estimated/actual token spend per project
+- **ENH-01**: Cost/usage visibility for the LLM (OpenRouter) analysis step — estimated/actual token spend per project
 - **ENH-02**: "Last good" segment audio fallback retained if a regenerate produces an unusable result
 
 ### Output

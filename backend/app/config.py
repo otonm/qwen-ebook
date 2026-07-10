@@ -51,8 +51,8 @@ class Settings:
     OUTPUT_DIR: str
     PREVIEW_DIR: str
     LLM_BACKEND: str
-    XAI_API_KEY: str
-    GROK_MODEL: str
+    OPENROUTER_API_KEY: str
+    OPENROUTER_MODEL: str
     DATABASE_URL: str
     ANALYSIS_TOKEN_LIMIT: int
 
@@ -78,8 +78,8 @@ def load_settings() -> Settings:
         OUTPUT_DIR=output_dir,
         PREVIEW_DIR=os.environ.get("PREVIEW_DIR", f"{output_dir}/previews"),
         LLM_BACKEND=os.environ.get("LLM_BACKEND", "mock"),
-        XAI_API_KEY=os.environ.get("XAI_API_KEY", ""),
-        GROK_MODEL=os.environ.get("GROK_MODEL", "grok-4.3"),
+        OPENROUTER_API_KEY=os.environ.get("OPENROUTER_API_KEY", ""),
+        OPENROUTER_MODEL=os.environ.get("OPENROUTER_MODEL", "x-ai/grok-4.3"),
         DATABASE_URL=os.environ.get("DATABASE_URL", _DEFAULT_DATABASE_URL),
         ANALYSIS_TOKEN_LIMIT=_env_int("ANALYSIS_TOKEN_LIMIT", 500_000),
     )

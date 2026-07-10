@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A self-hosted web app that turns long text (ebooks, articles) into a multi-voice narrated audiobook using Qwen TTS. An LLM (xAI/Grok) analyzes the source text, auto-detects the cast of characters (narrator plus speaking characters, inferred from context — names, ages, personalities), and splits the text into narration/dialogue segments with per-segment voice instructions. The user reviews and edits everything in a spreadsheet-like table before generating and joining the final audio file. Built for personal use: converting owned text into audio for commute/workout listening.
+A self-hosted web app that turns long text (ebooks, articles) into a multi-voice narrated audiobook using Qwen TTS. An LLM (accessed via OpenRouter) analyzes the source text, auto-detects the cast of characters (narrator plus speaking characters, inferred from context — names, ages, personalities), and splits the text into narration/dialogue segments with per-segment voice instructions. The user reviews and edits everything in a spreadsheet-like table before generating and joining the final audio file. Built for personal use: converting owned text into audio for commute/workout listening.
 
 ## Core Value
 
@@ -19,7 +19,7 @@ Given a long text, produce a natural-sounding, multi-character narrated audio fi
 ### Active
 
 - [ ] User can upload a source text file (.epub) — .txt validated in Phase 1, .epub extraction remains open (Phase 2, ING-02)
-- [ ] Text is analyzed by an LLM (xAI/Grok) which auto-detects the cast of characters (narrator + speaking characters) with inferred descriptions (age, personality, gender) from context
+- [ ] Text is analyzed by an LLM (via OpenRouter, default model `x-ai/grok-4.3`) which auto-detects the cast of characters (narrator + speaking characters) with inferred descriptions (age, personality, gender) from context
 - [ ] Text is split into narration/dialogue segments, each tagged with a suggested speaker and voice instructions (e.g. "narrates in a soothing voice", "gaining confidence")
 - [ ] User reviews and adjusts the auto-suggested cast via a wizard (rename, merge, edit descriptions, assign/preview a voice) before segments are generated
 - [ ] Voice assignment supports both preset voices (e.g. male/female narrator, stock characters) and LLM/context-derived voice instructions for characters without a good preset match
@@ -43,7 +43,7 @@ Given a long text, produce a natural-sounding, multi-character narrated audio fi
 - Personal project: the user wants to listen to ebooks/texts they own as multi-character narrated audio during commute/workouts.
 - Deployment target: Podman container(s) on a VM with an AMD RX 9070 XT (16GB VRAM), 32GB RAM, 16-core CPU. Local dev/testing happens on the user's current (non-GPU-specified) system — GPU-dependent behavior (Qwen TTS inference) should degrade gracefully or be mockable in dev.
 - Qwen TTS runs self-hosted on the AMD GPU host (ROCm), not via a cloud TTS API.
-- Text analysis/character detection uses the xAI Grok API (cloud) — user already has an API key.
+- Text analysis/character detection uses an LLM accessed via OpenRouter (cloud) — user already has an OpenRouter API key.
 - Network exposure is via Tailscale (private mesh network), so no public-facing auth layer is needed.
 
 ## Constraints
@@ -51,7 +51,7 @@ Given a long text, produce a natural-sounding, multi-character narrated audio fi
 - **Hardware**: Deployment GPU is AMD RX 9070 XT, 16GB VRAM — Qwen TTS inference must run under ROCm within that VRAM budget.
 - **Deployment**: Must run via Podman (not Docker) on the target VM.
 - **Network**: Served as a Tailscale service — no public internet exposure, single trusted user/network.
-- **External APIs**: Depends on xAI Grok API availability/cost for text analysis; Qwen TTS is self-hosted so no per-request cloud TTS cost, but requires GPU inference infrastructure in the container.
+- **External APIs**: Depends on OpenRouter (LLM gateway) availability/cost for text analysis; Qwen TTS is self-hosted so no per-request cloud TTS cost, but requires GPU inference infrastructure in the container.
 - **Persistence**: Single-user with saved projects — needs some form of local storage (files/DB) for project state (text, cast, segments, generated audio), no multi-tenant data model needed.
 
 ## Key Decisions

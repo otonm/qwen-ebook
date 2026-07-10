@@ -2,23 +2,30 @@
 
 Mirrors tts_client.py's mock/real backend switch (LLM_BACKEND, not
 TTS_BACKEND): with LLM_BACKEND=mock, returns canned deterministic cast +
-segments and never touches xai_sdk at all — the real import only happens
-lazily inside `_real_analyze` below, only ever reached from the non-mock
-branch, so `import app.analysis_client` alone never pulls in xai_sdk
-(DEPL-01-style isolation, mirrored from tts_client's GPU/CPU boundary).
+segments and makes no network call at all.
 
-Real Grok wiring (CAST-01/CAST-03): system prompt and book text are kept in
-separate message roles (`system(...)` vs `user(...)`, RESEARCH.md Security
-Domain / T-02-07) — book text is never concatenated into the system
-message, which is the app's mitigation for prompt injection via untrusted
-book text. `chat.parse(CastAnalysisResult)` is used as-is, with no manual
-`model_validate_json` re-validation afterwards (RESEARCH.md anti-pattern).
+Real wiring (CAST-01/CAST-03) talks to OpenRouter's OpenAI-compatible
+chat-completions endpoint via `httpx` (already a project dependency — no
+provider-specific SDK needed, and OpenRouter itself is a routing layer
+in front of many providers/models, not a single vendor SDK). System
+prompt and book text are kept in separate message roles (RESEARCH.md
+Security Domain / T-02-07) — book text is never concatenated into the
+system message, which is the app's mitigation for prompt injection via
+untrusted book text. The response is requested as strict JSON-schema
+structured output (`response_format: json_schema`) and validated via
+`CastAnalysisResult.model_validate_json()` — the model's declared JSON
+schema IS `CastAnalysisResult.model_json_schema()`, so there is no
+separate hand-maintained schema to drift out of sync.
 """
 
 from __future__ import annotations
 
+import httpx
+
 from app.config import settings
 from app.schemas import CastAnalysisResult, CharacterSuggestion, SegmentSuggestion
+
+_OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 # CAST-01/CAST-03: instructs Grok to (a) detect narrator + speaking cast
 # with inferred traits, (b) split the text into ordered voice-tagged
@@ -115,23 +122,38 @@ async def _real_analyze(
     running_cast: list[CharacterSuggestion] | None,
     recent_segments: list[SegmentSuggestion] | None,
 ) -> CastAnalysisResult:
-    # Lazy import: only ever reached from analyze()'s non-mock branch, so
-    # LLM_BACKEND=mock (dev/test/CI default) never pulls in xai_sdk.
-    from xai_sdk import AsyncClient
-    from xai_sdk.chat import system, user
-
-    client = AsyncClient(api_key=settings.XAI_API_KEY)
-    chat = client.chat.create(
-        model=settings.GROK_MODEL,
-        messages=[system(CAST_ANALYSIS_SYSTEM_PROMPT)],
-    )
     continuity = _build_continuity_block(running_cast, recent_segments)
-    chat.append(user(f"{continuity}{text}"))
+    payload = {
+        "model": settings.OPENROUTER_MODEL,
+        "messages": [
+            {"role": "system", "content": CAST_ANALYSIS_SYSTEM_PROMPT},
+            {"role": "user", "content": f"{continuity}{text}"},
+        ],
+        # Strict JSON-schema structured output — the schema IS
+        # CastAnalysisResult's own, so response shape can't drift from the
+        # Pydantic contract used for persistence/API responses elsewhere.
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "CastAnalysisResult",
+                "strict": True,
+                "schema": CastAnalysisResult.model_json_schema(),
+            },
+        },
+    }
 
-    # .parse() already returns a schema-validated CastAnalysisResult — no
-    # manual model_validate_json re-check follows (RESEARCH.md anti-pattern).
-    _response, result = await chat.parse(CastAnalysisResult)
-    return result
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(connect=5.0, read=300.0, write=30.0, pool=5.0)
+    ) as client:
+        response = await client.post(
+            _OPENROUTER_CHAT_COMPLETIONS_URL,
+            headers={"Authorization": f"Bearer {settings.OPENROUTER_API_KEY}"},
+            json=payload,
+        )
+        response.raise_for_status()
+
+    content = response.json()["choices"][0]["message"]["content"]
+    return CastAnalysisResult.model_validate_json(content)
 
 
 async def analyze(
