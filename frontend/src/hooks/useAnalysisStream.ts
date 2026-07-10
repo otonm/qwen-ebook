@@ -71,9 +71,13 @@ export function useAnalysisStream(projectId: string | null): AnalysisStreamState
 
     source.addEventListener("error", (event) => {
       const messageEvent = event as MessageEvent
-      const detail = messageEvent.data
-        ? (JSON.parse(messageEvent.data)?.detail ?? "Analysis failed")
-        : "The analysis service didn't respond — try again."
+      if (!messageEvent.data) {
+        // Native EventSource connection-drop (no server-sent payload) — a
+        // transient network hiccup, not a real analysis failure. Let
+        // EventSource's built-in reconnect proceed instead of closing.
+        return
+      }
+      const detail = JSON.parse(messageEvent.data)?.detail ?? "Analysis failed"
       setState((prev) => ({ ...prev, status: "error", errorDetail: detail }))
       source.close()
     })
