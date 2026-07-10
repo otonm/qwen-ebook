@@ -1,40 +1,65 @@
-"""FastAPI app: POST /projects orchestrates upload -> chunk -> synthesize ->
-join -> download.
+"""FastAPI app: POST /projects creates a Project immediately (status
+"analyzing") and spawns a background asyncio task that detects the cast +
+segments and persists them; GET /projects/{id} reads the result back;
+GET /projects/{id}/analysis-stream pushes live progress over SSE.
 
-Hardening (T-01-01/T-01-02/T-01-04, RESEARCH.md Security Domain V5/V12):
-  - All server-side filenames are generated with uuid4() — UploadFile.filename
-    is never used to build a filesystem path (path-traversal safe).
-  - Uploads are read in bounded chunks and rejected with 413 once they exceed
-    MAX_UPLOAD_BYTES, instead of buffering an unbounded body fully in memory.
+Hardening (T-02-01/T-02-02, RESEARCH.md Security Domain, carried over from
+Phase 1):
+  - Uploads are read in bounded chunks and rejected with 413 once they
+    exceed MAX_UPLOAD_BYTES, instead of buffering an unbounded body fully
+    in memory.
+  - Project ids are server-generated uuid4().hex — never derived from the
+    client-supplied filename.
   - The UTF-8 decode is guarded; a UnicodeDecodeError becomes a clean 400
     instead of an unhandled 500 stack trace leak.
+
+The prior Phase 1 shape of this endpoint (chunk -> synthesize -> ffmpeg
+join -> download the audio synchronously) is retired here — Phase 2
+replaces it with the analysis-first flow above; Phase 3 reintroduces
+per-segment audio generation against the reviewed cast (ROADMAP.md).
 """
 
 from __future__ import annotations
 
+import asyncio
 import uuid
-from pathlib import Path
+from collections.abc import AsyncIterable
+from contextlib import asynccontextmanager
 
-import httpx
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import Response
+from fastapi.sse import EventSourceResponse, ServerSentEvent
+from sqlmodel import Session, select
 from starlette.concurrency import run_in_threadpool
 
-from app.audio_join import join_wavs
-from app.chunking import chunk_paragraphs
+from app.analysis_worker import progress_events, run_analysis
 from app.config import settings
-from app.tts_client import synthesize, tts_health
-
-app = FastAPI()
+from app.db import engine, init_db
+from app.models import Character, Project, Segment
+from app.tts_client import tts_health
 
 _READ_CHUNK_SIZE = 1024 * 1024  # 1 MiB
+
+# Fire-and-forget background tasks must be held onto until they finish, or
+# they risk premature garbage collection mid-run (asyncio's own documented
+# footgun) — this set exists purely to hold a reference, per-task removal
+# via add_done_callback.
+_background_tasks: set[asyncio.Task] = set()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 
 @app.get("/healthz")
 async def healthz() -> Response:
-    """Backend readiness probe. IN-02: wires up the previously-unused
-    tts_health() helper so the pod's own readiness/liveness checks can tell
-    whether the backend can currently reach its configured TTS backend."""
+    """Backend readiness probe: can the backend currently reach its
+    configured TTS backend."""
     ok = await run_in_threadpool(tts_health)
     if not ok:
         raise HTTPException(status_code=503, detail="TTS backend unavailable")
@@ -58,7 +83,7 @@ async def _read_upload_bounded(file: UploadFile, max_bytes: int) -> bytes:
     return bytes(buffer)
 
 
-@app.post("/projects")
+@app.post("/projects", status_code=201)
 async def create_project(file: UploadFile = File(...)):  # noqa: B008 (FastAPI DI pattern)
     raw_bytes = await _read_upload_bounded(file, settings.MAX_UPLOAD_BYTES)
 
@@ -67,90 +92,86 @@ async def create_project(file: UploadFile = File(...)):  # noqa: B008 (FastAPI D
     except UnicodeDecodeError as exc:
         raise HTTPException(status_code=400, detail="Upload must be UTF-8 text") from exc
 
-    chunks = chunk_paragraphs(text, target_len=settings.CHUNK_TARGET_LEN)
-    if not chunks:
-        raise HTTPException(
-            status_code=400, detail="Upload contains no synthesizable text"
-        )
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="Upload contains no analyzable text")
 
     # Server-generated identifier — never derived from the client-supplied
     # filename, so it can't be used for path traversal.
     project_id = uuid.uuid4().hex
-    upload_dir = Path(settings.UPLOAD_DIR)
-    output_dir = Path(settings.OUTPUT_DIR)
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    output_dir.mkdir(parents=True, exist_ok=True)
 
-    # WR-01: chunk WAVs are intermediate scratch files — no longer needed
-    # once the join succeeds, and must not be left behind (orphaned,
-    # growing disk usage forever) if any step below fails partway through.
-    # The `finally` below removes whatever chunk files were actually
-    # written, whether the request ends in success or an HTTPException.
-    chunk_paths: list[str] = []
-    try:
-        for index, chunk_text in enumerate(chunks):
-            # T-03-02: a TTS-container failure/timeout must surface as a
-            # clean HTTP error to the client, not an unhandled 500 or an
-            # indefinite hang. tts_client.synthesize() itself applies
-            # bounded httpx timeouts (Plan 01); this wiring translates the
-            # raised client error into the appropriate gateway status code.
-            try:
-                # CR-02: synthesize() is a blocking (sync httpx) call with
-                # up to a 300s read timeout — run it in the threadpool so
-                # it doesn't freeze the single event loop for the whole app
-                # while it waits.
-                chunk_audio = await run_in_threadpool(
-                    synthesize, chunk_text, settings.TTS_DEFAULT_SPEAKER
-                )
-            except httpx.TimeoutException as exc:
-                raise HTTPException(
-                    status_code=504, detail="TTS service timed out"
-                ) from exc
-            except httpx.HTTPStatusError as exc:
-                # WR-02: distinguish the TTS container's own 4xx client/
-                # config errors (e.g. an unsupported TTS_DEFAULT_SPEAKER,
-                # oversized chunk text) from a genuine 5xx/connectivity
-                # failure — collapsing both into the same generic 502
-                # "unavailable" message hides the real cause.
-                if exc.response.status_code < 500:
-                    raise HTTPException(
-                        status_code=502,
-                        detail=f"TTS service rejected request: {exc.response.text}",
-                    ) from exc
-                raise HTTPException(
-                    status_code=502, detail="TTS service unavailable"
-                ) from exc
-            except httpx.HTTPError as exc:
-                raise HTTPException(
-                    status_code=502, detail="TTS service unavailable"
-                ) from exc
-            chunk_path = upload_dir / f"{project_id}_chunk_{index:04d}.wav"
-            await run_in_threadpool(chunk_path.write_bytes, chunk_audio)
-            chunk_paths.append(str(chunk_path))
+    with Session(engine) as session:
+        project = Project(
+            id=project_id,
+            filename=file.filename or "upload.txt",
+            source_text=text,
+            status="analyzing",
+        )
+        session.add(project)
+        session.commit()
 
-        output_path = output_dir / f"{project_id}.{settings.OUTPUT_FORMAT}"
-        try:
-            # WR-03: unlike the TTS call above, a join failure (bad
-            # OUTPUT_FORMAT, corrupt chunk, missing ffmpeg binary) must not
-            # be allowed to propagate as an unhandled exception / bare 500.
-            await run_in_threadpool(
-                join_wavs, chunk_paths, str(output_path), fmt=settings.OUTPUT_FORMAT
-            )
-        except RuntimeError as exc:
-            raise HTTPException(
-                status_code=500, detail="Audio join failed"
-            ) from exc
-    finally:
-        for chunk_path_str in chunk_paths:
-            Path(chunk_path_str).unlink(missing_ok=True)
+    task = asyncio.create_task(run_analysis(project_id))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
-    media_type = "audio/wav" if settings.OUTPUT_FORMAT == "wav" else "audio/mpeg"
-    output_bytes = await run_in_threadpool(output_path.read_bytes)
-    # IN-04: without a Content-Disposition header, browsers/`curl -O` get no
-    # suggested filename for the generated audio.
-    filename = f"{project_id}.{settings.OUTPUT_FORMAT}"
-    return Response(
-        content=output_bytes,
-        media_type=media_type,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    return {"id": project_id, "status": "analyzing"}
+
+
+def _serialize_project(
+    project: Project, characters: list[Character], segments: list[Segment]
+) -> dict:
+    character_by_id = {character.id: character for character in characters}
+    return {
+        "id": project.id,
+        "filename": project.filename,
+        "status": project.status,
+        "error_detail": project.error_detail,
+        "characters": [
+            {
+                "id": character.id,
+                "name": character.name,
+                "description": character.description,
+                "is_narrator": character.is_narrator,
+                "voice_preset": character.voice_preset,
+                "voice_instructions": character.voice_instructions,
+                "preview_audio_path": character.preview_audio_path,
+            }
+            for character in characters
+        ],
+        "segments": [
+            {
+                "id": segment.id,
+                "order": segment.order,
+                "character_id": segment.character_id,
+                "character_name": (
+                    character_by_id[segment.character_id].name
+                    if segment.character_id in character_by_id
+                    else None
+                ),
+                "text": segment.text,
+                "voice_instructions": segment.voice_instructions,
+            }
+            for segment in sorted(segments, key=lambda s: s.order)
+        ],
+    }
+
+
+@app.get("/projects/{project_id}")
+async def get_project(project_id: str):
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        characters = list(
+            session.exec(select(Character).where(Character.project_id == project_id)).all()
+        )
+        segments = list(
+            session.exec(select(Segment).where(Segment.project_id == project_id)).all()
+        )
+        return _serialize_project(project, characters, segments)
+
+
+@app.get("/projects/{project_id}/analysis-stream", response_class=EventSourceResponse)
+async def analysis_stream(project_id: str) -> AsyncIterable[ServerSentEvent]:
+    async for event_type, payload in progress_events(project_id):
+        yield ServerSentEvent(data=payload, event=event_type)

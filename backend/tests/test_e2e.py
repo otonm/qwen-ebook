@@ -1,44 +1,26 @@
-"""End-to-end test for the upload -> chunk -> synthesize -> join -> download pipeline.
+"""Upload-validation tests for POST /projects.
 
-Runs against the mock TTS backend (TTS_BACKEND=mock) so it requires no GPU.
-This is the RED test for Task 1: it must fail before app.main exists, and
-pass once Task 2 implements the happy-path pipeline. Task 3 extends it with
-upload-rejection cases (oversized upload, non-UTF-8 body).
+Phase 1's synchronous "upload -> chunk -> synthesize -> join -> download"
+shape of this endpoint is retired as of Plan 02-01: POST /projects now
+returns 201 {id, status} immediately and runs analysis in the background
+(see test_analysis_pipeline.py for that full flow). The bounded-upload/
+UTF-8/empty-body validation this endpoint still performs on the way in is
+unchanged from Phase 1, so those checks are kept here.
 """
 
 import os
-from pathlib import Path
 
 os.environ.setdefault("TTS_BACKEND", "mock")
+os.environ.setdefault("LLM_BACKEND", "mock")
 
-import httpx  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-import app.main as main_module  # noqa: E402
 from app.config import settings  # noqa: E402
+from app.db import init_db  # noqa: E402
 from app.main import app  # noqa: E402
 
+init_db()
 client = TestClient(app)
-
-SAMPLE_TEXT = (
-    "This is the first paragraph of the sample text. It is short.\n\n"
-    "This is the second paragraph. It follows a blank line, so it is a\n"
-    "separate paragraph under the chunker's paragraph-splitting rule.\n\n"
-    "A third and final short paragraph closes out the sample document."
-)
-
-
-def test_upload_txt_returns_playable_wav():
-    files = {"file": ("sample.txt", SAMPLE_TEXT.encode("utf-8"), "text/plain")}
-
-    response = client.post("/projects", files=files)
-
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("audio/")
-
-    body = response.content
-    assert body[0:4] == b"RIFF"
-    assert body[8:12] == b"WAVE"
 
 
 def test_oversized_upload_is_rejected():
@@ -65,56 +47,3 @@ def test_empty_upload_is_rejected_with_400():
     response = client.post("/projects", files=files)
 
     assert response.status_code == 400
-
-
-def test_chunk_files_are_cleaned_up_after_successful_join():
-    """WR-01: intermediate per-chunk WAVs written to UPLOAD_DIR must not be
-    left behind once the joined output has been produced."""
-    upload_dir = Path(settings.UPLOAD_DIR)
-    before = set(upload_dir.glob("*")) if upload_dir.exists() else set()
-
-    files = {"file": ("sample.txt", SAMPLE_TEXT.encode("utf-8"), "text/plain")}
-    response = client.post("/projects", files=files)
-    assert response.status_code == 200
-
-    after = set(upload_dir.glob("*")) if upload_dir.exists() else set()
-    assert after == before, f"orphaned chunk files left behind: {after - before}"
-
-
-def test_tts_4xx_response_is_surfaced_as_502_with_reason_not_generic(monkeypatch):
-    """WR-02: a TTS-container 4xx (e.g. unsupported speaker/config error)
-    must not be collapsed into the same generic 502 message used for a
-    genuine connectivity/5xx failure — the reason must be preserved."""
-
-    def _raise_400(*_args, **_kwargs):
-        request = httpx.Request("POST", "http://tts.invalid/synthesize")
-        response = httpx.Response(
-            400, request=request, text="unsupported speaker: bogus"
-        )
-        raise httpx.HTTPStatusError(
-            "Bad Request", request=request, response=response
-        )
-
-    monkeypatch.setattr(main_module, "synthesize", _raise_400)
-
-    files = {"file": ("sample.txt", SAMPLE_TEXT.encode("utf-8"), "text/plain")}
-    response = client.post("/projects", files=files)
-
-    assert response.status_code == 502
-    assert "unsupported speaker: bogus" in response.json()["detail"]
-
-
-def test_join_failure_is_a_clean_500_not_an_unhandled_exception(monkeypatch):
-    """WR-03: an ffmpeg/join RuntimeError must be translated into a clean
-    500 response, not propagate as an unhandled exception."""
-
-    def _raise_runtime_error(*_args, **_kwargs):
-        raise RuntimeError("ffmpeg concat failed (exit 1): boom")
-
-    monkeypatch.setattr(main_module, "join_wavs", _raise_runtime_error)
-
-    files = {"file": ("sample.txt", SAMPLE_TEXT.encode("utf-8"), "text/plain")}
-    response = client.post("/projects", files=files)
-
-    assert response.status_code == 500
-    assert response.json()["detail"] == "Audio join failed"
