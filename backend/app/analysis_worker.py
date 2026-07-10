@@ -127,7 +127,12 @@ def _persist_result(
         name_to_id[suggestion.name] = character.id
 
     order = order_start
-    for suggestion in result.segments:
+    # WR-04: sort by the LLM's own `suggestion.order` rather than trusting
+    # list-iteration position — `.order` is part of the structured-output
+    # contract precisely so a provider that ever returns `result.segments`
+    # out of its intended sequence doesn't silently persist segments in the
+    # wrong order with nothing catching the mismatch.
+    for suggestion in sorted(result.segments, key=lambda s: s.order):
         character_id = name_to_id.get(suggestion.character_name)
         if character_id is None:
             # Grok/mock referenced a character name not in its own cast
