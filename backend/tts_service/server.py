@@ -43,7 +43,10 @@ async def _keepalive_loop() -> None:
             if _model_module is not None:
                 try:
                     _model_module.keepalive_matmul()
-                except Exception:  # noqa: BLE001 - keepalive must never crash the server
+                except Exception:
+                    # Broad catch is deliberate: this is a periodic background
+                    # keepalive loop with no caller to propagate to — a failed
+                    # matmul must never crash the server.
                     logger.exception("GPU keepalive matmul failed")
     except asyncio.CancelledError:
         logger.info("GPU keepalive loop cancelled")
@@ -108,7 +111,10 @@ async def synthesize(req: SynthesizeRequest) -> Response:
         # (T-02-01: qwen-tts's own get_supported_speakers()-backed
         # validation raises ValueError; we surface it as a client error).
         return Response(status_code=400, content=str(exc))
-    except Exception:  # noqa: BLE001
+    except Exception:
+        # Broad catch is deliberate: any other model/runtime failure should
+        # surface as a clean 500 with a logged traceback, not an unhandled
+        # stack-trace leak to the client.
         logger.exception("synthesis failed")
         return Response(status_code=500, content="synthesis failed")
 
