@@ -277,7 +277,11 @@ async def _generate_preview(character_id: str, version: int) -> None:
         # (which Phase 1's TTS surface doesn't support; D-17 explicitly
         # defers that to VoiceDesign).
         speaker = character.voice_preset
-        if speaker is None:
+        if not speaker:
+            # "" (the sole shipped preset's persisted value, WIZ-03) means
+            # "auto-selected" just as much as None does — falling back only
+            # on None let a touched-but-unchanged preset dropdown silently
+            # defeat best-guess voice selection (CR-02).
             speaker = best_guess_preset(character.voice_instructions or description) or ""
 
     intro_line = f"Hi, my name is {name} and I am a {description}."
