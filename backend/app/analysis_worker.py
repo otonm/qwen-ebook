@@ -131,7 +131,14 @@ def _persist_result(
         character_id = name_to_id.get(suggestion.character_name)
         if character_id is None:
             # Grok/mock referenced a character name not in its own cast
-            # list — skip rather than violate the FK.
+            # list — skip rather than violate the FK. Logged (WR-03) so an
+            # LLM prompt-adherence regression leaves a trace instead of
+            # silently losing narration/dialogue with no way to diagnose it.
+            logger.warning(
+                "project %s: dropping segment for unknown character_name %r",
+                project_id,
+                suggestion.character_name,
+            )
             continue
         session.add(
             Segment(
