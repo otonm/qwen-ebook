@@ -52,10 +52,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. In a review wizard interface, the user can rename, merge, or edit the description of any suggested character, and assign each character a voice — either a preset voice or free-text voice instructions derived from its inferred description
   5. For each character, the user can play/pause an instant preview of their assigned voice, pre-generated automatically as soon as the voice is assigned (not generated on click)
 
-**Plans**: 5 plans
+**Plans**: 1/5 plans executed
 **Wave 1**
 
-  - [ ] 02-01-PLAN.md — Persistence + mock analysis pipeline: upload .txt → background analysis → cast+segments in SQLite, retrievable via API + SSE (CAST-01/CAST-03/WIZ-01)
+  - [x] 02-01-PLAN.md — Persistence + mock analysis pipeline: upload .txt → background analysis → cast+segments in SQLite, retrievable via API + SSE (CAST-01/CAST-03/WIZ-01)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -97,5 +97,5 @@ Phases execute in numeric order: 1 → 2 → 3
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Upload-to-Audio Spike (TTS/ROCm De-risk) | 3/3 | Complete   | 2026-07-09 |
-| 2. LLM Cast Detection & Review Wizard | 0/TBD | Not started | - |
+| 2. LLM Cast Detection & Review Wizard | 1/5 | In Progress|  |
 | 3. Editable Table, Full Generation Pipeline, Persistence & Deployment | 0/TBD | Not started | - |
