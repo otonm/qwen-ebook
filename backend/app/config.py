@@ -36,6 +36,9 @@ def _env_int(name: str, default: int) -> int:
 _ALLOWED_OUTPUT_FORMATS = {"wav", "mp3"}
 
 
+_DEFAULT_DATABASE_URL = f"sqlite:///{_REPO_ROOT / 'backend' / 'projects.db'}"
+
+
 @dataclass(frozen=True)
 class Settings:
     TTS_BACKEND: str
@@ -46,6 +49,11 @@ class Settings:
     OUTPUT_FORMAT: str
     UPLOAD_DIR: str
     OUTPUT_DIR: str
+    LLM_BACKEND: str
+    XAI_API_KEY: str
+    GROK_MODEL: str
+    DATABASE_URL: str
+    ANALYSIS_TOKEN_LIMIT: int
 
 
 def load_settings() -> Settings:
@@ -65,6 +73,11 @@ def load_settings() -> Settings:
         OUTPUT_FORMAT=output_format,
         UPLOAD_DIR=os.environ.get("UPLOAD_DIR", _DEFAULT_UPLOAD_DIR),
         OUTPUT_DIR=os.environ.get("OUTPUT_DIR", _DEFAULT_OUTPUT_DIR),
+        LLM_BACKEND=os.environ.get("LLM_BACKEND", "mock"),
+        XAI_API_KEY=os.environ.get("XAI_API_KEY", ""),
+        GROK_MODEL=os.environ.get("GROK_MODEL", "grok-4.3"),
+        DATABASE_URL=os.environ.get("DATABASE_URL", _DEFAULT_DATABASE_URL),
+        ANALYSIS_TOKEN_LIMIT=_env_int("ANALYSIS_TOKEN_LIMIT", 500_000),
     )
 
 
