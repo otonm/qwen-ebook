@@ -7,6 +7,7 @@ Three vertical slices, each a genuinely usable (if narrower) version of the app,
 ## Phases
 
 **Phase Numbering:**
+
 - Integer phases (1, 2, 3): Planned milestone work
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
@@ -19,50 +20,72 @@ Decimal phases appear between their surrounding integers in numeric order.
 ## Phase Details
 
 ### Phase 1: Upload-to-Audio Spike (TTS/ROCm De-risk)
+
 **Mode:** mvp
 **Goal**: User can upload a short .txt file and receive back a real, audible narrated audio file, produced end-to-end by the actual self-hosted Qwen TTS service running under ROCm on the RX 9070 XT inside its own GPU-scoped Podman container — proving the highest-risk technical bet early while still shipping a genuine (if minimal) working slice of the app.
 **Depends on**: Nothing (first phase)
 **Requirements**: ING-01, ING-03, GEN-01, GEN-04, DEPL-01
 **Success Criteria** (what must be TRUE):
+
   1. User can upload a .txt file and have it accepted as the source text for a new project
   2. The uploaded text is chunked on natural structural boundaries (chapter/paragraph), not arbitrary token counts, before being sent for synthesis
   3. Each chunk's audio is synthesized by the self-hosted Qwen TTS service running in its own GPU-scoped Podman container on the actual RX 9070 XT — real audio bytes are produced (verified from inside the real deployed container, not a mocked or ad hoc test)
   4. The per-chunk audio segments are joined in order into a single downloadable MP3/WAV file that plays back audibly start to finish
+
 **Plans**: 3 plans
+
   - [x] 01-01-PLAN.md — Walking Skeleton: upload -> chunk -> mock-TTS -> ffmpeg join -> download (real app skeleton, no GPU)
   - [x] 01-02-PLAN.md — GPU/ROCm enablement spike: real Qwen3-TTS audio from an isolated GPU-scoped Podman container (fallback ladder)
   - [x] 01-03-PLAN.md — Two-container Podman pod integration: real audible upload-to-audio end-to-end with GPU isolation
 
 ### Phase 2: LLM Cast Detection & Review Wizard
+
 **Mode:** mvp
 **Goal**: Given an uploaded text, the app automatically detects the cast of characters and splits the text into voice-tagged narration/dialogue segments, and the user can review, correct, and voice-assign that cast in a dedicated wizard with instant preview — the multi-character casting experience that differentiates this app from a single-voice reader.
 **Depends on**: Phase 1
 **Requirements**: ING-02, CAST-01, CAST-02, CAST-03, WIZ-01, WIZ-02, WIZ-03, WIZ-04, WIZ-05
 **Success Criteria** (what must be TRUE):
+
   1. User can upload an .epub file (in addition to .txt), with chapter/reading-order text extracted and markup/footnotes stripped
   2. After upload, the app presents an LLM-detected cast of characters (narrator plus speaking characters) with inferred age/gender/personality, and the cast stays consistent (no duplicate/renamed characters) across a long, multi-chunk text
   3. The uploaded text is shown split into ordered narration/dialogue segments, each pre-tagged with a suggested speaker and voice instructions
   4. In a review wizard interface, the user can rename, merge, or edit the description of any suggested character, and assign each character a voice — either a preset voice or free-text voice instructions derived from its inferred description
   5. For each character, the user can play/pause an instant preview of their assigned voice, pre-generated automatically as soon as the voice is assigned (not generated on click)
+
 **Plans**: 5 plans
+**Wave 1**
+
   - [ ] 02-01-PLAN.md — Persistence + mock analysis pipeline: upload .txt → background analysis → cast+segments in SQLite, retrievable via API + SSE (CAST-01/CAST-03/WIZ-01)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
   - [ ] 02-02-PLAN.md — EPUB ingestion: spine-order extraction, footnote strip, non-narrative skip, fail-fast (ING-02)
   - [ ] 02-03-PLAN.md — Real Grok analysis + system prompt + multi-chunk cross-chunk cast reconciliation (CAST-01/CAST-02/CAST-03)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
   - [ ] 02-04-PLAN.md — Wizard backend: character edit/merge, preset voices, eager race-safe voice preview (WIZ-02..05)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
   - [ ] 02-05-PLAN.md — Frontend cast-review wizard: upload UI, SSE analyzing, single-page cast cards + instant preview, read-only segment preview (ING-02/WIZ-01..05)
+
 **UI hint**: yes
 
 ### Phase 3: Editable Table, Full Generation Pipeline, Persistence & Deployment
+
 **Mode:** mvp
 **Goal**: User has the complete production workflow — an editable segment table, on-demand and batch audio generation with content-hash caching and single-row regeneration, resumable per-segment progress, project save/reopen, and private access to the whole running app over Tailscale — completing the full v1 scope.
 **Depends on**: Phase 2
 **Requirements**: TBL-01, TBL-02, TBL-03, TBL-04, GEN-02, GEN-03, GEN-05, PERS-01, PERS-02, CFG-01, CFG-02, CFG-03, DEPL-02
 **Success Criteria** (what must be TRUE):
+
   1. The main UI shows an editable table (~70% width) with Narrator (dropdown), Voice Instructions (free text), and Text (free text) columns per segment; the user can edit any cell and select multiple rows to bulk-reassign their narrator/voice in one action
   2. User can generate and preview any single row's audio on demand via a per-row generate + play/pause button
   3. Editing a row's Narrator, Voice Instructions, or Text after generation regenerates only that segment — via a content-hash cache keyed on (character, voice instructions, text, voice/model version) — then rejoins the full output file, leaving unchanged rows untouched
   4. A right-side config panel (~30% width) shows input file/model/output format/output file, the character list with preview controls, and live per-segment and overall progress during a conversion; a batch generation run resumes correctly from where it left off after an interruption or crash, because per-segment status (pending/queued/generating/complete/error) is persisted
   5. Projects (source text, cast with voice assignments, segment table, cached per-segment audio, joined output) are auto-saved as the user works and can be reopened later to continue exactly where they left off, all reachable only over the user's Tailscale network with no public exposure or added auth layer
+
 **Plans**: TBD
 **UI hint**: yes
 
