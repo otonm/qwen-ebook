@@ -155,3 +155,70 @@ def test_merge_unknown_ids_404s():
 
     response = client.post(f"/characters/{character_id}/merge", json={"target_id": "nope"})
     assert response.status_code == 404
+
+
+# --- Eager voice preview generation + serving (WIZ-04/WIZ-05) -----------
+
+
+def _wait_for_preview(character_id: str, timeout_seconds: float = 5.0) -> None:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        response = client.get(f"/characters/{character_id}/preview.wav")
+        if response.status_code == 200:
+            return
+        time.sleep(0.05)
+    raise TimeoutError(f"Character {character_id} preview not ready within {timeout_seconds}s")
+
+
+def test_preview_not_ready_returns_409():
+    project = _seed_project()
+    character_id = project["characters"][0]["id"]
+
+    response = client.get(f"/characters/{character_id}/preview.wav")
+
+    assert response.status_code == 409
+
+
+def test_patch_voice_eagerly_generates_preview():
+    project = _seed_project()
+    character_id = project["characters"][0]["id"]
+
+    response = client.patch(f"/characters/{character_id}", json={"voice_preset": ""})
+    assert response.status_code == 200
+
+    _wait_for_preview(character_id)
+
+    preview_response = client.get(f"/characters/{character_id}/preview.wav")
+    assert preview_response.status_code == 200
+    assert preview_response.headers["content-type"] == "audio/wav"
+    assert len(preview_response.content) > 0
+
+
+def test_rapid_reassignment_race_last_wins(monkeypatch):
+    """Pitfall 5: a slow first generation must not clobber a faster,
+    newer second generation's preview once both settle."""
+
+    def _controlled_synthesize(text: str, speaker: str) -> bytes:
+        if speaker == "slow":
+            time.sleep(0.3)
+            return b"SLOW-PREVIEW-BYTES"
+        time.sleep(0.02)
+        return b"FAST-PREVIEW-BYTES"
+
+    monkeypatch.setattr("app.main.synthesize", _controlled_synthesize)
+
+    project = _seed_project()
+    character_id = project["characters"][0]["id"]
+
+    first = client.patch(f"/characters/{character_id}", json={"voice_preset": "slow"})
+    assert first.status_code == 200
+    second = client.patch(f"/characters/{character_id}", json={"voice_preset": "fast"})
+    assert second.status_code == 200
+
+    # Give both background generations (slow ~0.3s, fast ~0.02s) time to
+    # fully settle before asserting the final state.
+    time.sleep(0.5)
+
+    preview_response = client.get(f"/characters/{character_id}/preview.wav")
+    assert preview_response.status_code == 200
+    assert preview_response.content == b"FAST-PREVIEW-BYTES"
