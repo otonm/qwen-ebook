@@ -1,0 +1,101 @@
+// Typed fetch wrappers for the backend's /projects, /characters, /voices
+// endpoints (backend/app/main.py). Same-origin via the Vite dev proxy
+// (vite.config.ts) — no base URL needed.
+
+export interface Character {
+  id: string
+  name: string
+  description: string
+  is_narrator: boolean
+  voice_preset: string | null
+  voice_instructions: string
+  preview_audio_path: string | null
+}
+
+export interface Segment {
+  id: string
+  order: number
+  character_id: string
+  character_name: string | null
+  text: string
+  voice_instructions: string
+}
+
+export interface Project {
+  id: string
+  filename: string
+  status: "analyzing" | "ready" | "error"
+  error_detail: string | null
+  characters: Character[]
+  segments: Segment[]
+}
+
+export interface VoicePreset {
+  name: string
+  label: string
+}
+
+export interface CharacterPatch {
+  name?: string
+  description?: string
+  voice_preset?: string
+  voice_instructions?: string
+}
+
+async function parseJsonOrThrow(response: Response) {
+  if (!response.ok) {
+    const detail = await response
+      .json()
+      .then((body) => body?.detail)
+      .catch(() => undefined)
+    throw new Error(detail || `Request failed with ${response.status}`)
+  }
+  return response.json()
+}
+
+export async function createProject(
+  file: File
+): Promise<{ id: string; status: string }> {
+  const formData = new FormData()
+  formData.append("file", file)
+  const response = await fetch("/projects", { method: "POST", body: formData })
+  return parseJsonOrThrow(response)
+}
+
+export async function getProject(id: string): Promise<Project> {
+  const response = await fetch(`/projects/${id}`)
+  return parseJsonOrThrow(response)
+}
+
+export async function patchCharacter(
+  id: string,
+  body: CharacterPatch
+): Promise<Character> {
+  const response = await fetch(`/characters/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  return parseJsonOrThrow(response)
+}
+
+export async function mergeCharacter(
+  sourceId: string,
+  targetId: string
+): Promise<Character> {
+  const response = await fetch(`/characters/${sourceId}/merge`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ target_id: targetId }),
+  })
+  return parseJsonOrThrow(response)
+}
+
+export async function getVoices(): Promise<VoicePreset[]> {
+  const response = await fetch("/voices")
+  return parseJsonOrThrow(response)
+}
+
+export function previewUrl(characterId: string): string {
+  return `/characters/${characterId}/preview.wav`
+}

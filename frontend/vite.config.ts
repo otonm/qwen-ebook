@@ -11,4 +11,13 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  server: {
+    // Dev-server proxy so the browser can call the FastAPI backend
+    // (deploy/run-local.sh's BACKEND_HOST_PORT default) same-origin.
+    proxy: {
+      "/projects": "http://localhost:8000",
+      "/characters": "http://localhost:8000",
+      "/voices": "http://localhost:8000",
+    },
+  },
 })

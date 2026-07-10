@@ -1,20 +1,101 @@
-import { Button } from "@/components/ui/button"
+import { useState } from "react"
 
-export function App() {
+import { CastWizard } from "@/components/CastWizard"
+import { UploadScreen } from "@/components/UploadScreen"
+import { Progress } from "@/components/ui/progress"
+import { Skeleton } from "@/components/ui/skeleton"
+import { useAnalysisStream } from "@/hooks/useAnalysisStream"
+
+function progressLabel(progress: { stage: string; n?: number; total?: number } | null) {
+  if (!progress) return "Starting analysis…"
+  if (progress.stage === "chunk" && progress.n && progress.total) {
+    return `Analyzing chunk ${progress.n} of ${progress.total}`
+  }
+  if (progress.stage === "estimating") return "Estimating text length…"
+  return "Analyzing…"
+}
+
+function progressPercent(progress: { n?: number; total?: number } | null) {
+  if (!progress?.n || !progress.total) return undefined
+  return Math.round((progress.n / progress.total) * 100)
+}
+
+function AnalyzingScreen({
+  progress,
+}: {
+  progress: { stage: string; n?: number; total?: number } | null
+}) {
   return (
-    <div className="flex min-h-svh p-6">
-      <div className="flex max-w-md min-w-0 flex-col gap-4 text-sm leading-loose">
-        <div>
-          <h1 className="font-medium">Project ready!</h1>
-          <p>You may now add components and start building.</p>
-          <p>We&apos;ve already added the button component for you.</p>
-          <Button className="mt-2">Button</Button>
-        </div>
-        <div className="font-mono text-xs text-muted-foreground">
-          (Press <kbd>d</kbd> to toggle dark mode)
-        </div>
+    <div className="mx-auto flex min-h-svh max-w-2xl flex-col justify-center gap-6 p-6">
+      <div className="text-center">
+        <h1 className="text-2xl font-semibold">Analyzing your book…</h1>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Detecting characters and splitting text into segments. This can
+          take a minute for longer books.
+        </p>
+      </div>
+      <Progress value={progressPercent(progress)} aria-label={progressLabel(progress)} />
+      <p className="text-center text-xs font-semibold text-muted-foreground">
+        {progressLabel(progress)}
+      </p>
+      <div className="flex flex-col gap-4">
+        <Skeleton className="h-24 w-full" />
+        <Skeleton className="h-24 w-full" />
+        <Skeleton className="h-24 w-full" />
       </div>
     </div>
+  )
+}
+
+function ErrorScreen({
+  detail,
+  onRetry,
+}: {
+  detail: string | null
+  onRetry: () => void
+}) {
+  return (
+    <div className="mx-auto flex min-h-svh max-w-md flex-col items-center justify-center gap-4 p-6 text-center">
+      <h1 className="text-2xl font-semibold">Couldn&apos;t analyze this file.</h1>
+      <p className="text-sm text-muted-foreground">
+        {detail || "The analysis service didn't respond — try again."}
+      </p>
+      <p className="text-sm text-muted-foreground">Fix the file and upload again.</p>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="text-sm font-semibold text-primary underline-offset-4 hover:underline"
+      >
+        Upload another file
+      </button>
+    </div>
+  )
+}
+
+export function App() {
+  const [projectId, setProjectId] = useState<string | null>(null)
+  const stream = useAnalysisStream(projectId)
+
+  if (!projectId) {
+    return <UploadScreen onUploaded={setProjectId} />
+  }
+
+  if (stream.status === "error") {
+    return (
+      <ErrorScreen detail={stream.errorDetail} onRetry={() => setProjectId(null)} />
+    )
+  }
+
+  if (stream.status === "analyzing") {
+    return <AnalyzingScreen progress={stream.progress} />
+  }
+
+  return (
+    <CastWizard
+      projectId={projectId}
+      initialCast={stream.cast}
+      initialSegments={stream.segments}
+    />
   )
 }
 
