@@ -16,14 +16,19 @@ Security (T-02-05, RESEARCH.md Security Domain): parsed via BeautifulSoup's
 parser. Never construct a custom `lxml.etree.XMLParser` with
 `resolve_entities=True`/`no_network=False` here — lxml disables
 entity/network resolution by default, and overriding that would reopen
-XXE. `_read_upload_bounded` (main.py) already bounds the *compressed*
-upload before this module ever runs `epub.read_epub`, which is what
-guards against a zip-bomb (T-02-04) — this module does not re-check size.
+XXE. `_read_upload_bounded` (main.py) only bounds the *compressed* upload
+before this module ever runs `epub.read_epub` — that alone does NOT guard
+against a zip-bomb (T-02-04), since decompressed size is unbounded
+regardless of compressed size. `_check_decompressed_size` below is what
+actually guards against a zip-bomb: it sums each entry's uncompressed
+`ZipInfo.file_size` (available without decompressing) and rejects the
+archive if it exceeds a sane multiple of the compressed upload size.
 """
 
 from __future__ import annotations
 
 import re
+import zipfile
 from io import BytesIO
 
 import ebooklib
@@ -60,11 +65,34 @@ _CHAPTER_BOUNDARY = "\n\n"
 
 _WHITESPACE_RUN = re.compile(r"\s+")
 
+# Zip-bomb guard (T-02-04): reject an archive whose total *uncompressed*
+# entry size exceeds this multiple of the compressed upload size. 100:1
+# comfortably covers legitimate EPUB content (XHTML/CSS compress well but
+# rarely beyond ~10:1 in practice) while still catching a crafted
+# highly-repetitive single-file payload (DEFLATE can reach ~1000:1).
+_MAX_DECOMPRESSION_RATIO = 100
+
 
 class EpubParseError(Exception):
     """Raised when a spine chapter can't be parsed even under lxml's
     `recover=True` mode (D-13) — the whole upload is rejected; no partial
     book is ever returned."""
+
+
+def _check_decompressed_size(epub_bytes: bytes) -> None:
+    """Reject `epub_bytes` if its total uncompressed content would exceed
+    `_MAX_DECOMPRESSION_RATIO` times its compressed size (T-02-04
+    zip-bomb guard). `ZipInfo.file_size` is read from the central
+    directory — no decompression happens here, so this is cheap even for
+    a maliciously crafted archive."""
+    try:
+        with zipfile.ZipFile(BytesIO(epub_bytes)) as zf:
+            total_uncompressed = sum(info.file_size for info in zf.infolist())
+    except zipfile.BadZipFile as exc:
+        raise EpubParseError(f"could not read EPUB container: {exc}") from exc
+
+    if total_uncompressed > len(epub_bytes) * _MAX_DECOMPRESSION_RATIO:
+        raise EpubParseError("EPUB content expands beyond the allowed decompression ratio")
 
 
 def _strip_footnotes(soup: BeautifulSoup) -> None:
@@ -113,8 +141,12 @@ def extract_text(epub_bytes: bytes) -> str:
     chapter-preserving narrative text from `epub_bytes` (ING-02).
 
     Raises `EpubParseError` if the container itself or any single spine
-    chapter can't be parsed even under lxml's `recover=True` behavior.
+    chapter can't be parsed even under lxml's `recover=True` behavior, or
+    if the archive's decompressed size would exceed the zip-bomb guard
+    (T-02-04).
     """
+    _check_decompressed_size(epub_bytes)
+
     try:
         book = epub.read_epub(BytesIO(epub_bytes), options={"ignore_ncx": True})
     except Exception as exc:
