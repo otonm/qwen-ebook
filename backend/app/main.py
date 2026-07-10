@@ -35,6 +35,7 @@ from starlette.concurrency import run_in_threadpool
 from app.analysis_worker import progress_events, run_analysis
 from app.config import settings
 from app.db import engine, init_db
+from app.epub_parser import EpubParseError, extract_text
 from app.models import Character, Project, Segment
 from app.tts_client import tts_health
 
@@ -85,12 +86,31 @@ async def _read_upload_bounded(file: UploadFile, max_bytes: int) -> bytes:
 
 @app.post("/projects", status_code=201)
 async def create_project(file: UploadFile = File(...)):  # noqa: B008 (FastAPI DI pattern)
+    # T-02-04 (zip-bomb): the bounded read below must run — and reject an
+    # oversized *compressed* upload — before extract_text ever calls
+    # epub.read_epub, which is the point decompression happens.
     raw_bytes = await _read_upload_bounded(file, settings.MAX_UPLOAD_BYTES)
 
-    try:
-        text = raw_bytes.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise HTTPException(status_code=400, detail="Upload must be UTF-8 text") from exc
+    filename = file.filename or "upload.txt"
+    is_epub = filename.lower().endswith(".epub") or file.content_type in (
+        "application/epub+zip",
+        "application/epub",
+    )
+
+    if is_epub:
+        try:
+            # CPU-bound (zip decompress + XML parse for every chapter) —
+            # offload to the threadpool so it doesn't block the event loop
+            # on a large book, same discipline as the synthesize/join calls
+            # elsewhere in this module.
+            text = await run_in_threadpool(extract_text, raw_bytes)
+        except EpubParseError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    else:
+        try:
+            text = raw_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise HTTPException(status_code=400, detail="Upload must be UTF-8 text") from exc
 
     if not text.strip():
         raise HTTPException(status_code=400, detail="Upload contains no analyzable text")
@@ -102,7 +122,7 @@ async def create_project(file: UploadFile = File(...)):  # noqa: B008 (FastAPI D
     with Session(engine) as session:
         project = Project(
             id=project_id,
-            filename=file.filename or "upload.txt",
+            filename=filename,
             source_text=text,
             status="analyzing",
         )
