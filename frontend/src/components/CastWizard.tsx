@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 
 import { getVoices, type Character, type Segment, type VoicePreset } from "@/api/client"
 import { CharacterCard } from "@/components/CharacterCard"
@@ -23,9 +23,22 @@ export function CastWizard({ projectId, initialCast, initialSegments }: CastWiza
   const [cast, setCast] = useState(initialCast)
   const [segments, setSegments] = useState(initialSegments)
   const [voices, setVoices] = useState<VoicePreset[]>([])
+  // WR-06: track pending REFRESH_DELAYS_MS timeout ids so they can be
+  // cleared on unmount — otherwise a scheduled refetch() still fires and
+  // calls setCast/setSegments after the component (e.g. user navigated
+  // away or re-uploaded mid-window) is gone.
+  const timeoutsRef = useRef<number[]>([])
 
   useEffect(() => {
     getVoices().then(setVoices).catch(() => setVoices([]))
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      for (const id of timeoutsRef.current) {
+        clearTimeout(id)
+      }
+    }
   }, [])
 
   const refetch = useCallback(() => {
@@ -38,7 +51,7 @@ export function CastWizard({ projectId, initialCast, initialSegments }: CastWiza
   const handleCastRefresh = useCallback(() => {
     refetch()
     for (const delay of REFRESH_DELAYS_MS) {
-      setTimeout(refetch, delay)
+      timeoutsRef.current.push(window.setTimeout(refetch, delay))
     }
   }, [refetch])
 
