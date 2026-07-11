@@ -36,6 +36,7 @@ from sqlmodel import Session, select
 from starlette.concurrency import run_in_threadpool
 
 from app.analysis_worker import has_pending_queue, progress_events, run_analysis
+from app.cache_key import compute_cache_key
 from app.config import settings
 from app.db import engine, init_db
 from app.epub_parser import EpubParseError, extract_text
@@ -158,6 +159,20 @@ def _serialize_character(character: Character) -> dict:
     }
 
 
+def _serialize_segment(segment: Segment, character_name: str | None) -> dict:
+    return {
+        "id": segment.id,
+        "order": segment.order,
+        "character_id": segment.character_id,
+        "character_name": character_name,
+        "text": segment.text,
+        "voice_instructions": segment.voice_instructions,
+        "generation_status": segment.generation_status,
+        "generation_error": segment.generation_error,
+        "audio_path": segment.audio_path,
+    }
+
+
 def _serialize_project(
     project: Project, characters: list[Character], segments: list[Segment]
 ) -> dict:
@@ -169,18 +184,12 @@ def _serialize_project(
         "error_detail": project.error_detail,
         "characters": [_serialize_character(character) for character in characters],
         "segments": [
-            {
-                "id": segment.id,
-                "order": segment.order,
-                "character_id": segment.character_id,
-                "character_name": (
-                    character_by_id[segment.character_id].name
-                    if segment.character_id in character_by_id
-                    else None
-                ),
-                "text": segment.text,
-                "voice_instructions": segment.voice_instructions,
-            }
+            _serialize_segment(
+                segment,
+                character_by_id[segment.character_id].name
+                if segment.character_id in character_by_id
+                else None,
+            )
             for segment in sorted(segments, key=lambda s: s.order)
         ],
     }
@@ -506,3 +515,179 @@ async def undo_merge_character(body: UndoMergeRequest) -> dict:
         task.add_done_callback(_background_tasks.discard)
 
     return result
+
+
+class SegmentPatch(BaseModel):
+    character_id: str | None = None
+    voice_instructions: str | None = None
+    text: str | None = None
+
+
+@app.patch("/segments/{segment_id}")
+async def patch_segment(segment_id: str, patch: SegmentPatch) -> dict:
+    """TBL-01/02 editable-cell commit, GEN-03/D-06 auto-regenerate-on-blur
+    — mirrors patch_character's shape (bump version, fire a race-safe
+    background regen) rather than reinventing it for segments."""
+    any_changed = (
+        patch.character_id is not None
+        or patch.voice_instructions is not None
+        or patch.text is not None
+    )
+
+    with Session(engine) as session:
+        segment = session.get(Segment, segment_id)
+        if segment is None:
+            raise HTTPException(status_code=404, detail="Segment not found")
+
+        if patch.character_id is not None:
+            segment.character_id = patch.character_id
+        if patch.voice_instructions is not None:
+            segment.voice_instructions = patch.voice_instructions
+        if patch.text is not None:
+            segment.text = patch.text
+        if any_changed:
+            segment.generation_version += 1
+            segment.generation_status = "generating"
+
+        session.add(segment)
+        session.commit()
+        session.refresh(segment)
+        character = session.get(Character, segment.character_id)
+        result = _serialize_segment(segment, character.name if character else None)
+        version = segment.generation_version
+
+    if any_changed:
+        task = asyncio.create_task(regenerate_segment(segment_id, version))
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+
+    return result
+
+
+def _resolve_segment_speaker(segment: Segment, character: Character | None) -> str:
+    """Same preset-then-best-guess-fallback resolution _generate_preview
+    uses for characters (T-02-10/D-17: only a preset name, no per-request
+    free-text instruct steering), applied at segment granularity so the
+    segment's own Voice Instructions cell — not just the character's — can
+    steer the fallback guess."""
+    speaker = character.voice_preset if character else None
+    if not speaker:
+        fallback_text = segment.voice_instructions or (
+            character.description if character else ""
+        )
+        speaker = best_guess_preset(fallback_text) or ""
+    return speaker
+
+
+async def regenerate_segment(segment_id: str, version: int) -> None:
+    """Recomputes the GEN-02 content-hash cache key from *current* DB state
+    (Pitfall 3 — never trust a stored cache_key as ground truth) and
+    synthesizes only on a miss. Writes back only if `generation_version`
+    still equals `version` when it finishes (Pitfall 2 last-request-wins
+    guard, mirrors _generate_preview)."""
+    with Session(engine) as session:
+        segment = session.get(Segment, segment_id)
+        if segment is None:
+            return
+        character = session.get(Character, segment.character_id)
+        speaker = _resolve_segment_speaker(segment, character)
+        cache_key = compute_cache_key(speaker, segment.voice_instructions, segment.text)
+        text = segment.text
+        existing_cache_key = segment.cache_key
+        existing_audio_path = segment.audio_path
+
+    if (
+        existing_cache_key == cache_key
+        and existing_audio_path
+        and Path(existing_audio_path).is_file()
+    ):
+        # Cache hit — reuse the audio already on disk, no synth call.
+        with Session(engine) as session:
+            segment = session.get(Segment, segment_id)
+            if segment is None or segment.generation_version != version:
+                return
+            segment.generation_status = "complete"
+            segment.cache_key = cache_key
+            session.add(segment)
+            session.commit()
+        return
+
+    try:
+        wav_bytes = await run_in_threadpool(synthesize, text, speaker)
+    except Exception:
+        # Broad catch is deliberate: this runs as a fire-and-forget
+        # background task with no caller to propagate to.
+        logger.exception(f"segment generation failed for segment {segment_id}")
+        with Session(engine) as session:
+            segment = session.get(Segment, segment_id)
+            if segment is None or segment.generation_version != version:
+                return
+            segment.generation_status = "error"
+            segment.generation_error = "TTS synthesis failed"
+            session.add(segment)
+            session.commit()
+        return
+
+    segments_dir = Path(settings.OUTPUT_DIR) / "segments"
+    segments_dir.mkdir(parents=True, exist_ok=True)
+    # Server-generated uuid filename — never derived from segment text
+    # (T-03-01).
+    audio_path = segments_dir / f"{uuid.uuid4().hex}.wav"
+    audio_path.write_bytes(wav_bytes)
+
+    with Session(engine) as session:
+        segment = session.get(Segment, segment_id)
+        if segment is None or segment.generation_version != version:
+            # A newer PATCH landed while this generation was in flight —
+            # discard the now-stale file (Pitfall 2 last-request-wins).
+            audio_path.unlink(missing_ok=True)
+            return
+
+        old_path = segment.audio_path
+        segment.audio_path = str(audio_path)
+        segment.cache_key = cache_key
+        segment.generation_status = "complete"
+        segment.generation_error = None
+        session.add(segment)
+        session.commit()
+
+    if old_path and old_path != str(audio_path):
+        Path(old_path).unlink(missing_ok=True)
+
+
+@app.post("/segments/{segment_id}/generate")
+async def generate_segment(segment_id: str) -> dict:
+    """TBL-04 on-demand per-row generate. Awaits the regenerate helper
+    synchronously (single-row scope, no need for a fire-and-forget task
+    here) and returns the segment's resulting status."""
+    with Session(engine) as session:
+        segment = session.get(Segment, segment_id)
+        if segment is None:
+            raise HTTPException(status_code=404, detail="Segment not found")
+        segment.generation_status = "generating"
+        session.add(segment)
+        session.commit()
+        version = segment.generation_version
+
+    await regenerate_segment(segment_id, version)
+
+    with Session(engine) as session:
+        segment = session.get(Segment, segment_id)
+        if segment is None:
+            raise HTTPException(status_code=404, detail="Segment not found")
+        character = session.get(Character, segment.character_id)
+        return _serialize_segment(segment, character.name if character else None)
+
+
+@app.get("/segments/{segment_id}/audio.wav")
+async def get_segment_audio(segment_id: str) -> Response:
+    with Session(engine) as session:
+        segment = session.get(Segment, segment_id)
+        if segment is None:
+            raise HTTPException(status_code=404, detail="Segment not found")
+        audio_path = segment.audio_path
+
+    if not audio_path or not Path(audio_path).is_file():
+        raise HTTPException(status_code=409, detail="Audio not ready")
+
+    return Response(content=Path(audio_path).read_bytes(), media_type="audio/wav")

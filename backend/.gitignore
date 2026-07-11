@@ -10,3 +10,5 @@ uploads/*
 output/*
 !output/.gitkeep
 *.db
+*.db-shm
+*.db-wal
