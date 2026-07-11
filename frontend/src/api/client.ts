@@ -12,6 +12,8 @@ export interface Character {
   preview_audio_path: string | null
 }
 
+export type GenerationStatus = "pending" | "queued" | "generating" | "complete" | "error"
+
 export interface Segment {
   id: string
   order: number
@@ -19,6 +21,9 @@ export interface Segment {
   character_name: string | null
   text: string
   voice_instructions: string
+  generation_status: GenerationStatus
+  generation_error: string | null
+  audio_path: string | null
 }
 
 export interface Project {
@@ -40,6 +45,12 @@ export interface CharacterPatch {
   description?: string
   voice_preset?: string
   voice_instructions?: string
+}
+
+export interface SegmentPatch {
+  character_id?: string
+  voice_instructions?: string
+  text?: string
 }
 
 export interface MergeUndoSnapshot {
@@ -124,4 +135,22 @@ export async function getVoices(): Promise<VoicePreset[]> {
 
 export function previewUrl(characterId: string): string {
   return `/characters/${characterId}/preview.wav`
+}
+
+export async function patchSegment(id: string, body: SegmentPatch): Promise<Segment> {
+  const response = await fetch(`/segments/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  return parseJsonOrThrow(response)
+}
+
+export async function generateSegment(id: string): Promise<Segment> {
+  const response = await fetch(`/segments/${id}/generate`, { method: "POST" })
+  return parseJsonOrThrow(response)
+}
+
+export function segmentAudioUrl(id: string): string {
+  return `/segments/${id}/audio.wav`
 }

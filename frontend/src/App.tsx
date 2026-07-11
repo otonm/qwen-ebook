@@ -1,6 +1,7 @@
 import { useState } from "react"
 
 import { CastWizard } from "@/components/CastWizard"
+import { ProjectScreen } from "@/components/ProjectScreen"
 import { UploadScreen } from "@/components/UploadScreen"
 import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -77,10 +78,17 @@ function ErrorScreen({
 // time, so a single localStorage key is enough to survive a page refresh.
 const PROJECT_ID_STORAGE_KEY = "qwen-ebook:projectId"
 
+// Post-analysis view toggle: the segment table (default landing spot once
+// a project is "ready") vs. the cast-review wizard, reachable via a
+// persistent header link either way (CONTEXT.md D-04 — exact navigation is
+// Claude's discretion).
+type ReadyView = "table" | "wizard"
+
 export function App() {
   const [projectId, setProjectIdState] = useState<string | null>(() =>
     localStorage.getItem(PROJECT_ID_STORAGE_KEY)
   )
+  const [readyView, setReadyView] = useState<ReadyView>("table")
 
   function setProjectId(id: string | null) {
     if (id) {
@@ -88,6 +96,7 @@ export function App() {
     } else {
       localStorage.removeItem(PROJECT_ID_STORAGE_KEY)
     }
+    setReadyView("table")
     setProjectIdState(id)
   }
 
@@ -108,11 +117,26 @@ export function App() {
   }
 
   return (
-    <CastWizard
-      projectId={projectId}
-      initialCast={stream.cast}
-      initialSegments={stream.segments}
-    />
+    <div className="flex flex-col gap-4">
+      <div className="mx-auto w-full max-w-[1600px] px-6 pt-6">
+        <button
+          type="button"
+          onClick={() => setReadyView(readyView === "table" ? "wizard" : "table")}
+          className="text-sm font-semibold text-primary underline-offset-4 hover:underline"
+        >
+          {readyView === "table" ? "Review cast →" : "← Back to segment table"}
+        </button>
+      </div>
+      {readyView === "wizard" ? (
+        <CastWizard
+          projectId={projectId}
+          initialCast={stream.cast}
+          initialSegments={stream.segments}
+        />
+      ) : (
+        <ProjectScreen projectId={projectId} />
+      )}
+    </div>
   )
 }
 
