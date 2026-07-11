@@ -509,17 +509,19 @@ See Architecture Patterns 1–7 above for the primary verified patterns (editabl
 
 **If this table is empty:** N/A — see rows above; all are flagged for planner/CONTEXT confirmation rather than blocking.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **What happens when the final join runs while one or more segments are in `error` status?**
    - What we know: GEN-03 says "regenerates only that segment, then rejoins the full output file, leaving unchanged rows untouched" — implying the join always runs over whatever's current.
    - What's unclear: Whether an `error`-status segment should (a) block the join entirely with a surfaced error, (b) join with its last-known-good cached audio if one exists, or (c) join with a placeholder/silence and flag it.
    - Recommendation: Simplest correct default — block the join (return an error to the user) if any segment lacks a valid `audio_path`, since ENH-02 ("last good" fallback) is explicitly deferred to v2. Confirm this reading with the user during plan-checking if it matters.
+   - **RESOLVED (plan 03-03):** Adopted option (a) — block the join. 03-03 Task 2's action and `key_links` require the batch join to surface an error if any segment lacks a valid `audio_path` (no last-good fallback in v1). See `03-03-PLAN.md`.
 
 2. **Does `PublishPort=127.0.0.1:8000:8000` in the Quadlet pod unit actually reach the host's `tailscale serve` correctly, or does `tailscale serve` need the container's port published on all interfaces bound to loopback specifically?**
    - What we know: `tailscale serve 8000` on the host proxies to whatever's listening on `localhost:8000` on the host network namespace.
    - What's unclear: Whether Podman's `127.0.0.1:8000:8000` port-publish binds in a way `tailscale serve` (running as a normal host process, not inside any container) can reach — this needs a real-hardware check during execution (matches D-01/D-02's "validate early, not just at the end" instruction).
    - Recommendation: Verify with `curl 127.0.0.1:8000/healthz` from the host once the Quadlet pod is up, then `tailscale serve --bg 8000` and confirm from a second tailnet device before considering DEPL-02 done.
+   - **RESOLVED (plan 03-05):** Verified on real hardware during 03-05 execution — 03-05 Task 2 stands the Quadlet pod up and Task 3 runs the `curl 127.0.0.1:8000/healthz` → `tailscale serve --bg 8000` → second-tailnet-device check before DEPL-02 is considered done. See `03-05-PLAN.md`.
 
 ## Environment Availability
 
