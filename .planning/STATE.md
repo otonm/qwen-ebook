@@ -4,17 +4,17 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 02
 current_phase_name: llm-cast-detection-review-wizard
-status: executing
-stopped_at: Phase 2 UI-SPEC approved
-last_updated: "2026-07-10T07:51:08.005Z"
-last_activity: 2026-07-10
-last_activity_desc: Phase 02 execution started
+status: complete
+stopped_at: Phase 2 complete — both UAT items passed
+last_updated: "2026-07-11T00:00:00.000Z"
+last_activity: 2026-07-11
+last_activity_desc: Phase 02 UAT completed (real-key Grok smoke test + live browser click-through), 4 fixes made during UAT (merge undo, segments table sizing/wrap, description field removed, refresh-persistence bug)
 progress:
   total_phases: 3
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 8
-  completed_plans: 3
-  percent: 33
+  completed_plans: 5
+  percent: 67
 ---
 
 # Project State
@@ -24,16 +24,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-09)
 
 **Core value:** Given a long text, produce a natural-sounding, multi-character narrated audio file with minimal manual editing — the LLM does the heavy lifting of casting and segmenting, the user just fine-tunes.
-**Current focus:** Phase 02 — llm-cast-detection-review-wizard
+**Current focus:** Phase 03 — next phase, not yet started
 
 ## Current Position
 
-Phase: 02 (llm-cast-detection-review-wizard) — EXECUTING
-Plan: 1 of 5
-Status: Executing Phase 02
-Last activity: 2026-07-10 — Phase 02 execution started
+Phase: 02 (llm-cast-detection-review-wizard) — COMPLETE
+Plan: 5 of 5
+Status: Phase 02 fully verified (mechanical + human UAT); ready to plan Phase 03
+Last activity: 2026-07-11 — Phase 02 UAT completed, 2/2 passed
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██████░░░░] 67%
 
 ## Performance Metrics
 
@@ -72,9 +72,10 @@ None yet.
 
 ### Blockers/Concerns
 
-- Phase 1 (from research): ROCm 7.2/RDNA4 (gfx1201) support is very recent; qwen-tts package is new and fast-moving. Pin exact package/model versions and smoke-test real audio bytes out of the actual RX 9070 XT from inside the real deployed Podman container (not just an ad hoc `podman run`) before building anything else on top.
-- Phase 1 (from research): Podman GPU passthrough (`/dev/kfd`, `/dev/dri`, `--group-add keep-groups`, SELinux `container_use_devices` boolean) must be baked into the real deployment unit and verified from inside the deployed container, not just a manual test.
-- Phase 2 (from research): Cross-chunk character reconciliation strategy is a synthesized best-practice (MEDIUM confidence), not a sourced novel-specific benchmark — validate chunk-size/context-window assumptions against Grok's actual limits and real book lengths before over-building chunking machinery.
+- ~~Phase 1 (from research): ROCm 7.2/RDNA4 (gfx1201) support is very recent...~~ **RESOLVED 2026-07-10** (commit `1ce34aa`): the production RX 9070 XT VM (Debian 13, Tailscale hostname `tts`, real Navi 48/gfx1201 GPU) exists and the full D-09 re-verification checklist closed out against it — see `deploy/README.md` §"Production VM bring-up": `rocminfo`/on-device PyTorch matmul confirmed gfx1201 with no `HSA_OVERRIDE_GFX_VERSION`/`GPU_SECURITY_OPT` workarounds needed; rootless Podman GPU passthrough does NOT work on this Podman/crun combo (host GID mapping gap, not GPU-specific) — rootful (`sudo podman run --user 0:0`) does and is now `run-local.sh`'s default; a real end-to-end `POST /projects` returned a genuine non-silent WAV (24kHz, 21.4s, 96.5% non-zero samples). A `sox` packaging bug (missing transitive dependency of `qwen-tts`'s tokenizer) was found and fixed along the way. No pod is currently running on the VM (nothing persists a teardown) — `bash deploy/run-local.sh` re-brings it up on demand.
+- ~~Phase 1 (from research): Podman GPU passthrough...~~ **RESOLVED**, see above — this is the same finding.
+- Phase 2 (from research): Cross-chunk character reconciliation strategy is a synthesized best-practice (MEDIUM confidence), not a sourced novel-specific benchmark — validate chunk-size/context-window assumptions against Grok's actual limits and real book lengths before over-building chunking machinery. Partially addressed: 02-UAT.md's real-key Grok smoke test (2026-07-11) validated single-chunk prompt quality on a short passage; cross-chunk reconciliation itself is proven by a behavioral test (`test_run_analysis_multi_chunk_reconciles_duplicate_and_orders_segments_globally`) but not yet exercised against a real long book via a real LLM call — still open if that matters before Phase 3 sign-off.
+- Phase 3 (new): The real GPU pipeline works but was proven on a fresh single pass, not under Phase 3's actual production shape — content-hash caching, resumable batch generation, and concurrent/regenerate-while-batch-running behavior haven't been tested against real GPU inference yet (only against `TTS_BACKEND=mock`). Validate these against the real pod during Phase 3, not just at sign-off.
 
 ### Quick Tasks Completed
 
@@ -96,6 +97,7 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-10T07:32:01.690Z
-Stopped at: Phase 2 UI-SPEC approved
-Resume file: .planning/phases/02-llm-cast-detection-review-wizard/02-UI-SPEC.md
+Last session: 2026-07-11T00:00:00.000Z
+Stopped at: Phase 2 complete — both UAT items passed (02-UAT.md)
+Resume file: .planning/phases/02-llm-cast-detection-review-wizard/02-UAT.md
+Next step: plan Phase 03 (see ROADMAP.md)
