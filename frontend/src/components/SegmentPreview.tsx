@@ -28,6 +28,7 @@ const columns = [
     header: "Speaker",
   }),
   columnHelper.accessor("text", {
+    id: "text",
     header: "Text",
   }),
 ]
@@ -55,7 +56,10 @@ export function SegmentPreview({ segments }: SegmentPreviewProps) {
           {table.getHeaderGroups().map((headerGroup) => (
             <TableRow key={headerGroup.id}>
               {headerGroup.headers.map((header) => (
-                <TableHead key={header.id}>
+                <TableHead
+                  key={header.id}
+                  className={header.column.id === "speaker" ? "w-40" : undefined}
+                >
                   {flexRender(header.column.columnDef.header, header.getContext())}
                 </TableHead>
               ))}
@@ -69,7 +73,14 @@ export function SegmentPreview({ segments }: SegmentPreviewProps) {
               className={index % 2 === 1 ? "bg-secondary" : undefined}
             >
               {row.getVisibleCells().map((cell) => (
-                <TableCell key={cell.id} className="text-sm">
+                <TableCell
+                  key={cell.id}
+                  className={
+                    cell.column.id === "speaker"
+                      ? "align-top py-3 text-sm font-medium whitespace-nowrap"
+                      : "align-top py-3 text-base whitespace-normal break-words"
+                  }
+                >
                   {flexRender(cell.column.columnDef.cell, cell.getContext())}
                 </TableCell>
               ))}

@@ -6,6 +6,7 @@ import {
   patchCharacter,
   previewUrl,
   type Character,
+  type MergeUndoSnapshot,
   type VoicePreset,
 } from "@/api/client"
 import { Badge } from "@/components/ui/badge"
@@ -37,6 +38,7 @@ interface CharacterCardProps {
   otherCharacters: Character[]
   voices: VoicePreset[]
   onCastRefresh: () => void
+  onMerged: (undo: MergeUndoSnapshot) => void
 }
 
 export function CharacterCard({
@@ -44,9 +46,9 @@ export function CharacterCard({
   otherCharacters,
   voices,
   onCastRefresh,
+  onMerged,
 }: CharacterCardProps) {
   const [name, setName] = useState(character.name)
-  const [description, setDescription] = useState(character.description)
   const [voiceInstructions, setVoiceInstructions] = useState(
     character.voice_instructions
   )
@@ -63,10 +65,9 @@ export function CharacterCard({
     if (characterIdRef.current !== character.id) {
       characterIdRef.current = character.id
       setName(character.name)
-      setDescription(character.description)
       setVoiceInstructions(character.voice_instructions)
     }
-  }, [character.id, character.name, character.description, character.voice_instructions])
+  }, [character.id, character.name, character.voice_instructions])
 
   async function saveField(patch: Parameters<typeof patchCharacter>[1]) {
     await patchCharacter(character.id, patch)
@@ -75,10 +76,6 @@ export function CharacterCard({
 
   function handleNameBlur() {
     if (name !== character.name) void saveField({ name })
-  }
-
-  function handleDescriptionBlur() {
-    if (description !== character.description) void saveField({ description })
   }
 
   function handleVoiceInstructionsBlur() {
@@ -104,10 +101,10 @@ export function CharacterCard({
 
   async function confirmMerge() {
     if (!mergeTargetId) return
-    await mergeCharacter(character.id, mergeTargetId)
+    const { undo } = await mergeCharacter(character.id, mergeTargetId)
     setMergeDialogOpen(false)
     setMergeTargetId(null)
-    onCastRefresh()
+    onMerged(undo)
   }
 
   function closeMergeDialog(open: boolean) {
@@ -135,14 +132,6 @@ export function CharacterCard({
         )}
       </div>
 
-      <Textarea
-        aria-label={`Description for ${character.name}`}
-        value={description}
-        onChange={(e) => setDescription(e.target.value)}
-        onBlur={handleDescriptionBlur}
-        className="min-h-16 bg-background text-sm"
-      />
-
       <div className="flex flex-col gap-2">
         <label className="text-xs font-semibold text-muted-foreground">Preset</label>
         <Select
@@ -169,12 +158,12 @@ export function CharacterCard({
         <label className="text-xs font-semibold text-muted-foreground">
           Voice Instructions
         </label>
-        <Input
+        <Textarea
           aria-label={`Voice instructions for ${character.name}`}
           value={voiceInstructions}
           onChange={(e) => setVoiceInstructions(e.target.value)}
           onBlur={handleVoiceInstructionsBlur}
-          className="bg-background text-sm"
+          className="min-h-32 bg-background text-sm"
         />
       </div>
 
@@ -228,7 +217,7 @@ export function CharacterCard({
             </DialogTitle>
             <DialogDescription>
               {mergeTarget
-                ? `This removes '${character.name}' from the cast and reassigns its segments to ${mergeTarget.name}. This can't be undone automatically.`
+                ? `This removes '${character.name}' from the cast and reassigns its segments to ${mergeTarget.name}. You can undo this right after.`
                 : "Choose which character to merge this one into."}
             </DialogDescription>
           </DialogHeader>

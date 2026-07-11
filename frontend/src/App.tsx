@@ -72,8 +72,25 @@ function ErrorScreen({
   )
 }
 
+// Single-slot persistence for "the project you're currently working on" —
+// this app has no project list/switcher UI, just one wizard in flight at a
+// time, so a single localStorage key is enough to survive a page refresh.
+const PROJECT_ID_STORAGE_KEY = "qwen-ebook:projectId"
+
 export function App() {
-  const [projectId, setProjectId] = useState<string | null>(null)
+  const [projectId, setProjectIdState] = useState<string | null>(() =>
+    localStorage.getItem(PROJECT_ID_STORAGE_KEY)
+  )
+
+  function setProjectId(id: string | null) {
+    if (id) {
+      localStorage.setItem(PROJECT_ID_STORAGE_KEY, id)
+    } else {
+      localStorage.removeItem(PROJECT_ID_STORAGE_KEY)
+    }
+    setProjectIdState(id)
+  }
+
   const stream = useAnalysisStream(projectId)
 
   if (!projectId) {

@@ -378,11 +378,30 @@ class MergeRequest(BaseModel):
     target_id: str
 
 
+class UndoMergeCharacter(BaseModel):
+    id: str
+    project_id: str
+    name: str
+    description: str
+    is_narrator: bool
+    voice_preset: str | None
+    voice_instructions: str
+    voice_version: int
+    had_preview: bool
+
+
+class UndoMergeRequest(BaseModel):
+    character: UndoMergeCharacter
+    segment_ids: list[str]
+
+
 @app.post("/characters/{character_id}/merge")
 async def merge_character(character_id: str, body: MergeRequest) -> dict:
     """WIZ-02 merge: reassign source's segments to target, delete source.
 
     Explicit two-chosen-ids user action — no fuzzy character matching.
+    Returns an `undo` snapshot the client can hand back to POST
+    /characters/undo-merge to reverse this single merge.
     """
     source_id, target_id = character_id, body.target_id
     if source_id == target_id:
@@ -395,10 +414,24 @@ async def merge_character(character_id: str, body: MergeRequest) -> dict:
             raise HTTPException(status_code=404, detail="Character not found")
 
         source_preview_path = source.preview_audio_path
+        undo_snapshot = {
+            "character": {
+                "id": source.id,
+                "project_id": source.project_id,
+                "name": source.name,
+                "description": source.description,
+                "is_narrator": source.is_narrator,
+                "voice_preset": source.voice_preset,
+                "voice_instructions": source.voice_instructions,
+                "voice_version": source.voice_version,
+                "had_preview": source_preview_path is not None,
+            },
+        }
 
         segments = list(
             session.exec(select(Segment).where(Segment.character_id == source_id)).all()
         )
+        undo_snapshot["segment_ids"] = [segment.id for segment in segments]
         for segment in segments:
             segment.character_id = target_id
             session.add(segment)
@@ -412,12 +445,64 @@ async def merge_character(character_id: str, body: MergeRequest) -> dict:
         )
         result = _serialize_character(target)
         result["segment_count"] = segment_count
+        result["undo"] = undo_snapshot
 
     # WR-05: the merged-away source's preview WAV is no longer referenced
     # by any row — clean it up from disk same as _generate_preview's own
     # stale-preview cleanup, or every merge leaks one file under
-    # PREVIEW_DIR.
+    # PREVIEW_DIR. Undoing the merge regenerates a fresh preview instead
+    # of trying to resurrect this exact file.
     if source_preview_path:
         Path(source_preview_path).unlink(missing_ok=True)
+
+    return result
+
+
+@app.post("/characters/undo-merge")
+async def undo_merge_character(body: UndoMergeRequest) -> dict:
+    """Reverses the most recent POST /characters/{id}/merge using the
+    `undo` snapshot from that response. Recreates the source character
+    with its original id and fields, and reassigns the given segment ids
+    back to it.
+
+    # ponytail: stateless single-shot undo — the snapshot lives in the
+    # client, not a server-side undo stack. Only the merge that produced
+    # this exact snapshot can be undone; upgrade to a server-tracked
+    # history if multi-step undo is ever needed.
+    """
+    character = body.character
+    with Session(engine) as session:
+        if session.get(Character, character.id) is not None:
+            raise HTTPException(status_code=409, detail="Character already exists")
+
+        restored = Character(
+            id=character.id,
+            project_id=character.project_id,
+            name=character.name,
+            description=character.description,
+            is_narrator=character.is_narrator,
+            voice_preset=character.voice_preset,
+            voice_instructions=character.voice_instructions,
+            voice_version=character.voice_version,
+        )
+        session.add(restored)
+
+        segments = list(
+            session.exec(select(Segment).where(Segment.id.in_(body.segment_ids))).all()
+        )
+        for segment in segments:
+            segment.character_id = character.id
+            session.add(segment)
+
+        session.commit()
+        session.refresh(restored)
+        result = _serialize_character(restored)
+
+    if character.had_preview:
+        task = asyncio.create_task(
+            _generate_preview(character.id, character.voice_version)
+        )
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
 
     return result

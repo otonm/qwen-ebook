@@ -42,6 +42,21 @@ export interface CharacterPatch {
   voice_instructions?: string
 }
 
+export interface MergeUndoSnapshot {
+  character: {
+    id: string
+    project_id: string
+    name: string
+    description: string
+    is_narrator: boolean
+    voice_preset: string | null
+    voice_instructions: string
+    voice_version: number
+    had_preview: boolean
+  }
+  segment_ids: string[]
+}
+
 async function parseJsonOrThrow(response: Response) {
   if (!response.ok) {
     const detail = await response
@@ -82,11 +97,22 @@ export async function patchCharacter(
 export async function mergeCharacter(
   sourceId: string,
   targetId: string
-): Promise<Character> {
+): Promise<Character & { undo: MergeUndoSnapshot }> {
   const response = await fetch(`/characters/${sourceId}/merge`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ target_id: targetId }),
+  })
+  return parseJsonOrThrow(response)
+}
+
+export async function undoMergeCharacter(
+  snapshot: MergeUndoSnapshot
+): Promise<Character> {
+  const response = await fetch("/characters/undo-merge", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(snapshot),
   })
   return parseJsonOrThrow(response)
 }

@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 
-import { getVoices, type Character, type Segment, type VoicePreset } from "@/api/client"
+import {
+  getVoices,
+  undoMergeCharacter,
+  type Character,
+  type MergeUndoSnapshot,
+  type Segment,
+  type VoicePreset,
+} from "@/api/client"
+import { Button } from "@/components/ui/button"
 import { CharacterCard } from "@/components/CharacterCard"
 import { SegmentPreview } from "@/components/SegmentPreview"
 import { refreshProject } from "@/hooks/useAnalysisStream"
@@ -23,6 +31,9 @@ export function CastWizard({ projectId, initialCast, initialSegments }: CastWiza
   const [cast, setCast] = useState(initialCast)
   const [segments, setSegments] = useState(initialSegments)
   const [voices, setVoices] = useState<VoicePreset[]>([])
+  // Only the most recent merge can be undone — a new merge (or an
+  // explicit dismiss) replaces/clears this, see undo-merge's ponytail note.
+  const [pendingUndo, setPendingUndo] = useState<MergeUndoSnapshot | null>(null)
   // WR-06: track pending REFRESH_DELAYS_MS timeout ids so they can be
   // cleared on unmount — otherwise a scheduled refetch() still fires and
   // calls setCast/setSegments after the component (e.g. user navigated
@@ -55,12 +66,42 @@ export function CastWizard({ projectId, initialCast, initialSegments }: CastWiza
     }
   }, [refetch])
 
+  const handleMerged = useCallback(
+    (undo: MergeUndoSnapshot) => {
+      setPendingUndo(undo)
+      handleCastRefresh()
+    },
+    [handleCastRefresh]
+  )
+
+  function handleUndoMerge() {
+    if (!pendingUndo) return
+    void undoMergeCharacter(pendingUndo).then(() => {
+      setPendingUndo(null)
+      handleCastRefresh()
+    })
+  }
+
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-12 p-6">
+    <div className="mx-auto flex max-w-[1600px] flex-col gap-12 p-6">
       <h1 className="text-2xl font-semibold">Review Cast</h1>
 
+      {pendingUndo && (
+        <div className="flex items-center justify-between gap-4 rounded-lg bg-secondary p-3 text-sm">
+          <span>Merged &quot;{pendingUndo.character.name}&quot; away.</span>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => setPendingUndo(null)}>
+              Dismiss
+            </Button>
+            <Button size="sm" onClick={handleUndoMerge}>
+              Undo
+            </Button>
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-col gap-8 xl:flex-row xl:gap-8">
-        <div className="grid flex-1 grid-cols-1 gap-6 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 xl:w-[420px] xl:flex-none xl:grid-cols-1">
           {cast.map((character) => (
             <CharacterCard
               key={character.id}
@@ -68,11 +109,12 @@ export function CastWizard({ projectId, initialCast, initialSegments }: CastWiza
               otherCharacters={cast.filter((c) => c.id !== character.id)}
               voices={voices}
               onCastRefresh={handleCastRefresh}
+              onMerged={handleMerged}
             />
           ))}
         </div>
 
-        <div className="flex-1 xl:max-w-md">
+        <div className="flex-1">
           <SegmentPreview segments={segments} />
         </div>
       </div>
