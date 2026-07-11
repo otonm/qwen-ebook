@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 02
-current_phase_name: llm-cast-detection-review-wizard
-status: complete
-stopped_at: Phase 2 complete — both UAT items passed
-last_updated: "2026-07-11T00:00:00.000Z"
+current_phase: 03
+current_phase_name: editable-table-full-generation-pipeline-persistence-deployment
+status: context_gathered
+stopped_at: Phase 3 context gathered
+last_updated: "2026-07-11T00:30:00.000Z"
 last_activity: 2026-07-11
-last_activity_desc: Phase 02 UAT completed (real-key Grok smoke test + live browser click-through), 4 fixes made during UAT (merge undo, segments table sizing/wrap, description field removed, refresh-persistence bug)
+last_activity_desc: Phase 03 discuss-phase completed (real-hardware validation approach, project list, bulk select, auto-regen-on-blur); STATE.md/PROJECT.md GPU-status corrections committed
 progress:
   total_phases: 3
   completed_phases: 2
@@ -21,17 +21,17 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-07-09)
+See: .planning/PROJECT.md (updated 2026-07-11)
 
 **Core value:** Given a long text, produce a natural-sounding, multi-character narrated audio file with minimal manual editing — the LLM does the heavy lifting of casting and segmenting, the user just fine-tunes.
-**Current focus:** Phase 03 — next phase, not yet started
+**Current focus:** Phase 03 — context gathered, ready to plan
 
 ## Current Position
 
-Phase: 02 (llm-cast-detection-review-wizard) — COMPLETE
-Plan: 5 of 5
-Status: Phase 02 fully verified (mechanical + human UAT); ready to plan Phase 03
-Last activity: 2026-07-11 — Phase 02 UAT completed, 2/2 passed
+Phase: 03 (editable-table-full-generation-pipeline-persistence-deployment) — CONTEXT GATHERED
+Plan: none yet
+Status: 03-CONTEXT.md written; ready for /gsd-plan-phase 3
+Last activity: 2026-07-11 — Phase 03 discuss-phase completed
 
 Progress: [██████░░░░] 67%
 
@@ -97,7 +97,7 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-11T00:00:00.000Z
-Stopped at: Phase 2 complete — both UAT items passed (02-UAT.md)
-Resume file: .planning/phases/02-llm-cast-detection-review-wizard/02-UAT.md
-Next step: plan Phase 03 (see ROADMAP.md)
+Last session: 2026-07-11T00:30:00.000Z
+Stopped at: Phase 3 context gathered
+Resume file: .planning/phases/03-editable-table-full-generation-pipeline-persistence-deployme/03-CONTEXT.md
+Next step: /gsd-plan-phase 3
