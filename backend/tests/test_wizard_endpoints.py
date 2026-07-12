@@ -203,6 +203,31 @@ def test_patch_voice_eagerly_generates_preview():
     assert len(preview_response.content) > 0
 
 
+def test_trigger_preview_generates_on_demand():
+    """CFG-03 Config Panel: a character whose voice was never (re)saved via
+    PATCH has no preview until POST /characters/{id}/preview is called."""
+    project = _seed_project()
+    character_id = project["characters"][0]["id"]
+
+    assert client.get(f"/characters/{character_id}/preview.wav").status_code == 409
+
+    response = client.post(f"/characters/{character_id}/preview")
+    assert response.status_code == 200
+    assert response.json()["status"] == "generating"
+
+    _wait_for_preview(character_id)
+
+    preview_response = client.get(f"/characters/{character_id}/preview.wav")
+    assert preview_response.status_code == 200
+    assert preview_response.headers["content-type"] == "audio/wav"
+    assert len(preview_response.content) > 0
+
+
+def test_trigger_preview_missing_character_404s():
+    response = client.post("/characters/does-not-exist/preview")
+    assert response.status_code == 404
+
+
 def test_rapid_reassignment_race_last_wins(monkeypatch):
     """Pitfall 5: a slow first generation must not clobber a faster,
     newer second generation's preview once both settle."""

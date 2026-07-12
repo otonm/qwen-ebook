@@ -23,6 +23,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from sqlmodel import Session  # noqa: E402
 
 from app.db import engine, init_db  # noqa: E402
+from app.generation_worker import is_generation_running  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import Character, Project, Segment  # noqa: E402
 
@@ -494,6 +495,46 @@ def test_per_row_generate_rejects_duplicate_while_generating():
 
     response = client.post(f"/segments/{segment_id}/generate")
     assert response.status_code == 409
+
+
+# --- POST /projects/{id}/generate/cancel (T-03-27) ------------------------
+
+
+def test_cancel_running_batch_resets_generating_rows(monkeypatch):
+    def _slow_synthesize(text: str, speaker: str) -> bytes:
+        time.sleep(0.3)
+        return b"SLOW-BATCH-BYTES"
+
+    monkeypatch.setattr("app.main.synthesize", _slow_synthesize)
+
+    project_id, segment_ids = _seed_project_with_segments(["One.", "Two.", "Three."])
+
+    response = client.post(f"/projects/{project_id}/generate")
+    assert response.status_code == 202
+
+    time.sleep(0.1)  # let the first segment start synthesizing
+
+    cancel_response = client.post(f"/projects/{project_id}/generate/cancel")
+    assert cancel_response.status_code == 200
+    assert cancel_response.json()["status"] == "cancelled"
+
+    statuses = [_get_segment(sid).generation_status for sid in segment_ids]
+    assert "generating" not in statuses
+    # Cancelling before all three synth calls complete means the run
+    # stopped early — not every row reached "complete".
+    assert statuses.count("complete") < len(segment_ids)
+
+    # A second generate call is no longer blocked by the (now-finished)
+    # cancelled task.
+    assert not is_generation_running(project_id)
+
+
+def test_cancel_when_nothing_running_is_noop():
+    project_id, _ = _seed_project_with_segments(["One."])
+
+    response = client.post(f"/projects/{project_id}/generate/cancel")
+    assert response.status_code == 200
+    assert response.json()["status"] == "not_running"
 
 
 # --- GET /projects — project list (PERS-02) -------------------------------
