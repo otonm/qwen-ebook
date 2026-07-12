@@ -1,6 +1,7 @@
 import { useState } from "react"
 
 import { CastWizard } from "@/components/CastWizard"
+import { ProjectListScreen } from "@/components/ProjectListScreen"
 import { ProjectScreen } from "@/components/ProjectScreen"
 import { UploadScreen } from "@/components/UploadScreen"
 import { Progress } from "@/components/ui/progress"
@@ -84,11 +85,20 @@ const PROJECT_ID_STORAGE_KEY = "qwen-ebook:projectId"
 // Claude's discretion).
 type ReadyView = "table" | "wizard"
 
+// PERS-02 (UI-SPEC "Screens"): with no active project, the landing area is
+// either the project list (root/default) or the upload flow (reached via
+// the list's "New Project" CTA) — a separate, purely-in-memory toggle from
+// `projectId`/localStorage, since neither state should persist across a
+// refresh (refreshing mid-upload should land back on the list, not resume
+// the upload form).
+type LandingView = "list" | "upload"
+
 export function App() {
   const [projectId, setProjectIdState] = useState<string | null>(() =>
     localStorage.getItem(PROJECT_ID_STORAGE_KEY)
   )
   const [readyView, setReadyView] = useState<ReadyView>("table")
+  const [landingView, setLandingView] = useState<LandingView>("list")
 
   function setProjectId(id: string | null) {
     if (id) {
@@ -97,13 +107,26 @@ export function App() {
       localStorage.removeItem(PROJECT_ID_STORAGE_KEY)
     }
     setReadyView("table")
+    setLandingView("list")
     setProjectIdState(id)
   }
 
   const stream = useAnalysisStream(projectId)
 
+  // PERS-01: every edit already commits immediately via PATCH endpoints
+  // (patchCharacter/patchSegment/bulkReassignSegments) the moment a field
+  // blurs or an action fires — there is no separate save mechanism to add,
+  // autosave already holds by construction.
   if (!projectId) {
-    return <UploadScreen onUploaded={setProjectId} />
+    if (landingView === "upload") {
+      return <UploadScreen onUploaded={setProjectId} />
+    }
+    return (
+      <ProjectListScreen
+        onOpen={setProjectId}
+        onNewProject={() => setLandingView("upload")}
+      />
+    )
   }
 
   if (stream.status === "error") {
@@ -118,7 +141,14 @@ export function App() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="mx-auto w-full max-w-[1600px] px-6 pt-6">
+      <div className="mx-auto flex w-full max-w-[1600px] items-center justify-between px-6 pt-6">
+        <button
+          type="button"
+          onClick={() => setProjectId(null)}
+          className="text-sm font-semibold text-primary underline-offset-4 hover:underline"
+        >
+          ← Projects
+        </button>
         <button
           type="button"
           onClick={() => setReadyView(readyView === "table" ? "wizard" : "table")}

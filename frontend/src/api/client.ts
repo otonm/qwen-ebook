@@ -39,6 +39,15 @@ export interface Project {
   segments: Segment[]
 }
 
+// PERS-02: thin row for the project list/landing screen — id/filename/
+// status/created_at only, no character/segment payload.
+export interface ProjectSummary {
+  id: string
+  filename: string
+  status: "analyzing" | "ready" | "error"
+  created_at: string
+}
+
 export interface GenerationProgress {
   segment_id: string
   n: number
@@ -96,6 +105,12 @@ export async function createProject(
   const formData = new FormData()
   formData.append("file", file)
   const response = await fetch("/projects", { method: "POST", body: formData })
+  return parseJsonOrThrow(response)
+}
+
+/** PERS-02: the project list/landing screen's data source. */
+export async function listProjects(): Promise<ProjectSummary[]> {
+  const response = await fetch("/projects")
   return parseJsonOrThrow(response)
 }
 
