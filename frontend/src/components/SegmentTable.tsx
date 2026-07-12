@@ -302,8 +302,8 @@ function BulkReassignToolbar({
 
 /** TBL-01/02/03/04, GEN-02/03: the editable segment table — extends
  * SegmentPreview.tsx's read-only TanStack setup with editable Narrator/
- * Voice Instructions/Text cells (commit onBlur), a per-row generate/play
- * control, and checkbox row selection + bulk-reassign toolbar. */
+ * Text cells (commit onBlur), a per-row generate/play control, and
+ * checkbox row selection + bulk-reassign toolbar. */
 export function SegmentTable({ segments, characters, onSegmentChange }: SegmentTableProps) {
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
   const data = useMemo(
@@ -337,18 +337,6 @@ export function SegmentTable({ segments, characters, onSegmentChange }: SegmentT
           <NarratorCell
             segment={row.original}
             characters={characters}
-            onSegmentChange={onSegmentChange}
-          />
-        ),
-      }),
-      columnHelper.display({
-        id: "voice_instructions",
-        header: "Voice Instructions",
-        cell: ({ row }) => (
-          <EditableTextCell
-            segment={row.original}
-            field="voice_instructions"
-            label="Voice Instructions"
             onSegmentChange={onSegmentChange}
           />
         ),
