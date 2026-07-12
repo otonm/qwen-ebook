@@ -3,18 +3,18 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 current_phase: 03
-current_phase_name: editable-table-full-generation-pipeline-persistence-deployme
-status: executing
-stopped_at: Phase 3 Plan 1 complete (real-GPU checkpoint verified)
-last_updated: "2026-07-12T10:13:35.971Z"
+status: completed
+stopped_at: Phase 3 complete (v1 milestone done) — DEPL-02 verified on production tts VM via tailscale serve
+last_updated: "2026-07-12T10:22:22.430Z"
 last_activity: 2026-07-12
-last_activity_desc: Phase 03 execution started
+last_activity_desc: Phase 03 marked complete
 progress:
   total_phases: 3
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 13
-  completed_plans: 12
-  percent: 67
+  completed_plans: 13
+  percent: 100
+current_phase_name: editable-table-full-generation-pipeline-persistence-deployme
 ---
 
 # Project State
@@ -28,12 +28,12 @@ See: .planning/PROJECT.md (updated 2026-07-11)
 
 ## Current Position
 
-Phase: 03 (editable-table-full-generation-pipeline-persistence-deployme) — EXECUTING
-Plan: 4 of 5
-Status: Ready to execute
-Last activity: 2026-07-12 — Phase 03 execution started
+Phase: 03 — COMPLETE
+Plan: 5 of 5
+Status: Phase 03 complete
+Last activity: 2026-07-12 — Phase 03 marked complete
 
-Progress: [███████░░░] 69%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -58,6 +58,7 @@ Progress: [███████░░░] 69%
 | Phase 03 P02 | 15 | 2 tasks | 4 files |
 | Phase 03 P03 | ~4min+checkpoint | 4 tasks | 7 files |
 | Phase 03 P04 | 10min | 2 tasks | 5 files |
+| Phase 03 P05 | ~15min | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -74,6 +75,8 @@ Recent decisions affecting current work:
 - [Phase ?]: Task 4's real-GPU checkpoint (crash-resume + concurrent-edit-race) was run by the orchestrator directly on the production tts VM, automated via seeded throwaway projects + podman restart + TTS-container log inspection
 - [Phase ?]: Project.created_at already existed from plan 03-01 — no schema change needed for plan 03-04's list endpoint
 - [Phase ?]: Landing-with-no-project routing uses a separate in-memory LandingView state (list/upload) rather than overloading localStorage-backed projectId, so a mid-upload refresh lands back on the project list
+- [Phase ?]: Task 3's production deployment was performed by the orchestrator directly on the tts VM over Tailscale SSH (sudo/systemd/tailscale access this executor agent lacks) — matches how 03-01's Task 4 real-GPU checkpoint was handled
+- [Phase ?]: Open Question 2 from 03-RESEARCH.md is RESOLVED: tailscale serve on the host correctly reaches a Podman Quadlet pod port published to 127.0.0.1 only
 
 ### Pending Todos
 
@@ -106,7 +109,7 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-12T10:13:05.668Z
-Stopped at: Phase 3 UI-SPEC approved
-Resume file: .planning/phases/03-editable-table-full-generation-pipeline-persistence-deployme/03-UI-SPEC.md
-Next step: /gsd-plan-phase 3
+Last session: 2026-07-12T10:22:22.426Z
+Stopped at: Phase 3 complete (v1 milestone done) — DEPL-02 verified on production tts VM via tailscale serve
+Resume file: None
+Next step: v1 milestone complete — /gsd-complete-milestone

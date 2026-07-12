@@ -27,16 +27,16 @@
 
 ### Segment Table
 
-- [ ] **TBL-01**: Main UI shows an editable table (~70% width) with three columns: Narrator (dropdown of defined characters), Voice Instructions (free text), Text (free text)
-- [ ] **TBL-02**: User can edit the Narrator, Voice Instructions, or Text of any row
+- [x] **TBL-01**: Main UI shows an editable table (~70% width) with three columns: Narrator (dropdown of defined characters), Voice Instructions (free text), Text (free text)
+- [x] **TBL-02**: User can edit the Narrator, Voice Instructions, or Text of any row
 - [x] **TBL-03**: User can select multiple rows and bulk-reassign their Narrator/voice in one action
-- [ ] **TBL-04**: Each row has a generate + play/pause button that synthesizes and previews that row's audio individually, on demand
+- [x] **TBL-04**: Each row has a generate + play/pause button that synthesizes and previews that row's audio individually, on demand
 
 ### Generation & Audio
 
 - [ ] **GEN-01**: Each table row's audio segment is generated via self-hosted Qwen TTS running on the AMD GPU host
-- [ ] **GEN-02**: Each segment's audio is cached and keyed by a content hash of (character, voice instructions, text, voice/model version); unchanged segments are not regenerated
-- [ ] **GEN-03**: Editing a row's Narrator, Voice Instructions, or Text after generation regenerates only that segment, then rejoins the full file (not a full regenerate)
+- [x] **GEN-02**: Each segment's audio is cached and keyed by a content hash of (character, voice instructions, text, voice/model version); unchanged segments are not regenerated
+- [x] **GEN-03**: Editing a row's Narrator, Voice Instructions, or Text after generation regenerates only that segment, then rejoins the full file (not a full regenerate)
 - [x] **GEN-04**: Generated segments are joined in table order into a single output audio file (MP3 or WAV)
 - [x] **GEN-05**: Per-segment generation status (pending/queued/generating/complete/error) is persisted so a batch generation run can resume after an interruption or crash
 
@@ -54,7 +54,7 @@
 ### Deployment
 
 - [ ] **DEPL-01**: App is deployed as Podman container(s) on a VM with an AMD GPU (RX 9070 XT, 16GB VRAM), with the TTS service isolated in its own GPU-scoped container
-- [ ] **DEPL-02**: App is served over the user's Tailscale network only, with no public exposure and no additional auth layer
+- [x] **DEPL-02**: App is served over the user's Tailscale network only, with no public exposure and no additional auth layer
 
 ## v2 Requirements
 
@@ -108,19 +108,19 @@ Which phases cover which requirements. Updated during roadmap creation.
 | WIZ-03 | Phase 2 | Pending |
 | WIZ-04 | Phase 2 | Pending |
 | WIZ-05 | Phase 2 | Pending |
-| TBL-01 | Phase 3 | Pending |
-| TBL-02 | Phase 3 | Pending |
+| TBL-01 | Phase 3 | Complete |
+| TBL-02 | Phase 3 | Complete |
 | TBL-03 | Phase 3 | Complete |
-| TBL-04 | Phase 3 | Pending |
-| GEN-02 | Phase 3 | Pending |
-| GEN-03 | Phase 3 | Pending |
+| TBL-04 | Phase 3 | Complete |
+| GEN-02 | Phase 3 | Complete |
+| GEN-03 | Phase 3 | Complete |
 | GEN-05 | Phase 3 | Complete |
 | PERS-01 | Phase 3 | Complete |
 | PERS-02 | Phase 3 | Complete |
 | CFG-01 | Phase 3 | Complete |
 | CFG-02 | Phase 3 | Complete |
 | CFG-03 | Phase 3 | Complete |
-| DEPL-02 | Phase 3 | Pending |
+| DEPL-02 | Phase 3 | Complete |
 
 **Coverage:**
 
