@@ -193,3 +193,85 @@ def test_patch_bumps_generation_version(monkeypatch):
     segment = _get_segment(segment_id)
     assert segment.generation_version == version_before + 2
     assert Path(segment.audio_path).read_bytes() == b"FAST-AUDIO-BYTES"
+
+
+# --- POST /segments/bulk-reassign (TBL-03) --------------------------------
+
+
+def _seed_second_character(project_id: str, name: str = "Other") -> str:
+    character_id = uuid.uuid4().hex
+    with Session(engine) as session:
+        session.add(
+            Character(
+                id=character_id,
+                project_id=project_id,
+                name=name,
+                description="a second character",
+                is_narrator=False,
+                voice_instructions="",
+            )
+        )
+        session.commit()
+    return character_id
+
+
+def test_bulk_reassign_updates_all_rows():
+    seed = _seed_segment()
+    project_id = seed["project_id"]
+    target_id = _seed_second_character(project_id)
+
+    seed2 = _seed_segment()
+    with Session(engine) as session:
+        segment = session.get(Segment, seed2["segment_id"])
+        segment.project_id = project_id
+        session.add(segment)
+        session.commit()
+
+    response = client.post(
+        "/segments/bulk-reassign",
+        json={
+            "segment_ids": [seed["segment_id"], seed2["segment_id"]],
+            "character_id": target_id,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["updated"] == 2
+
+    for segment_id in (seed["segment_id"], seed2["segment_id"]):
+        segment = _get_segment(segment_id)
+        assert segment.character_id == target_id
+
+
+def test_bulk_reassign_bumps_generation_version():
+    seed = _seed_segment()
+    project_id = seed["project_id"]
+    target_id = _seed_second_character(project_id)
+    version_before = _get_segment(seed["segment_id"]).generation_version
+
+    response = client.post(
+        "/segments/bulk-reassign",
+        json={"segment_ids": [seed["segment_id"]], "character_id": target_id},
+    )
+    assert response.status_code == 200
+
+    segment = _get_segment(seed["segment_id"])
+    assert segment.generation_version == version_before + 1
+
+
+def test_bulk_reassign_rejects_cross_project():
+    seed = _seed_segment()
+    other_seed = _seed_segment()
+    other_target_id = _seed_second_character(other_seed["project_id"])
+    character_id_before = _get_segment(seed["segment_id"]).character_id
+
+    response = client.post(
+        "/segments/bulk-reassign",
+        json={
+            "segment_ids": [seed["segment_id"]],
+            "character_id": other_target_id,
+        },
+    )
+    assert 400 <= response.status_code < 500
+
+    segment = _get_segment(seed["segment_id"])
+    assert segment.character_id == character_id_before
