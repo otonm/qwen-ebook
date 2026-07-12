@@ -22,6 +22,7 @@ per-segment audio generation against the reviewed cast (ROADMAP.md).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import uuid
 from collections.abc import AsyncIterable
@@ -42,8 +43,12 @@ from app.config import settings
 from app.db import engine, init_db
 from app.epub_parser import EpubParseError, extract_text
 from app.generation_worker import (
+    _running_generations,
     generation_progress_events,
+    get_generation_task,
     has_pending_generation_queue,
+    is_generation_running,
+    push_generation_event,
     run_batch_generation,
 )
 from app.models import Character, Project, Segment
@@ -399,6 +404,31 @@ async def _generate_preview(character_id: str, version: int) -> None:
         Path(old_path).unlink(missing_ok=True)
 
 
+@app.post("/characters/{character_id}/preview")
+async def trigger_character_preview(character_id: str) -> dict:
+    """CFG-03 Config Panel on-demand preview trigger: a character whose
+    voice was never (re)saved via PATCH /characters/{id} has a permanently
+    null preview_audio_path, since that's otherwise the only path that ever
+    calls _generate_preview. Bumps voice_version (same race guard
+    _generate_preview already relies on) and kicks off preview generation
+    as a tracked background task — reuses _generate_preview as-is, same
+    create_task + _background_tasks pattern patch_character uses."""
+    with Session(engine) as session:
+        character = session.get(Character, character_id)
+        if character is None:
+            raise HTTPException(status_code=404, detail="Character not found")
+        character.voice_version += 1
+        session.add(character)
+        session.commit()
+        version = character.voice_version
+
+    task = asyncio.create_task(_generate_preview(character_id, version))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    return {"status": "generating"}
+
+
 @app.get("/characters/{character_id}/preview.wav")
 async def get_character_preview(character_id: str) -> Response:
     with Session(engine) as session:
@@ -555,15 +585,18 @@ class SegmentPatch(BaseModel):
 
 @app.patch("/segments/{segment_id}")
 async def patch_segment(segment_id: str, patch: SegmentPatch) -> dict:
-    """TBL-01/02 editable-cell commit, GEN-03/D-06 auto-regenerate-on-blur
-    — mirrors patch_character's shape (bump version, fire a race-safe
-    background regen) rather than reinventing it for segments."""
+    """TBL-01/02 editable-cell commit. GEN-03 (D-06 REVERSED during 03 UAT
+    — see 03-CONTEXT.md): an edit INVALIDATES the row's stale audio (clears
+    it, marks the row pending) but does NOT auto-fire a background
+    regeneration — the user triggers that manually via the per-row or
+    Generate All controls."""
     any_changed = (
         patch.character_id is not None
         or patch.voice_instructions is not None
         or patch.text is not None
     )
 
+    old_audio_path: str | None = None
     with Session(engine) as session:
         segment = session.get(Segment, segment_id)
         if segment is None:
@@ -577,19 +610,26 @@ async def patch_segment(segment_id: str, patch: SegmentPatch) -> dict:
             segment.text = patch.text
         if any_changed:
             segment.generation_version += 1
-            segment.generation_status = "generating"
+            segment.generation_status = "pending"
+            segment.generation_error = None
+            # Clear the stale audio — a cleared audio_path is sufficient to
+            # force a cache miss on the next manual generate (it recomputes
+            # the cache key from live DB state and checks the file exists
+            # on disk); cache_key itself is left for regenerate_segment to
+            # recompute, same as everywhere else.
+            old_audio_path = segment.audio_path
+            segment.audio_path = None
 
         session.add(segment)
         session.commit()
         session.refresh(segment)
         character = session.get(Character, segment.character_id)
         result = _serialize_segment(segment, character.name if character else None)
-        version = segment.generation_version
 
-    if any_changed:
-        task = asyncio.create_task(regenerate_segment(segment_id, version))
-        _background_tasks.add(task)
-        task.add_done_callback(_background_tasks.discard)
+    if old_audio_path:
+        # Mirrors regenerate_segment's post-commit unlink pattern — the
+        # invalidated file must not leak on disk.
+        Path(old_audio_path).unlink(missing_ok=True)
 
     return result
 
@@ -689,11 +729,19 @@ async def regenerate_segment(segment_id: str, version: int) -> None:
 async def generate_segment(segment_id: str) -> dict:
     """TBL-04 on-demand per-row generate. Awaits the regenerate helper
     synchronously (single-row scope, no need for a fire-and-forget task
-    here) and returns the segment's resulting status."""
+    here) and returns the segment's resulting status.
+
+    T-03-26: a row already 'generating' (via an earlier per-row click or a
+    batch run currently on this row) is rejected with 409 rather than
+    starting a second concurrent regenerate_segment for the same row —
+    that second call would race the first and get stomped by the worker's
+    stale-'generating' reset."""
     with Session(engine) as session:
         segment = session.get(Segment, segment_id)
         if segment is None:
             raise HTTPException(status_code=404, detail="Segment not found")
+        if segment.generation_status == "generating":
+            raise HTTPException(status_code=409, detail="Segment is already generating")
         segment.generation_status = "generating"
         session.add(segment)
         session.commit()
@@ -766,16 +814,73 @@ async def generate_project(project_id: str) -> dict:
     is pushed over generation_stream. Fires even if a previous run already
     completed; run_batch_generation's own stale-reset + per-segment cache
     check make a re-invocation on an already-complete project a fast no-op
-    join, which is exactly what "Resume Generation" needs."""
+    join, which is exactly what "Resume Generation" needs.
+
+    T-03-25/T-03-26: a second call while a run is already live for this
+    project is rejected without spawning another task — two concurrent
+    run_batch_generation passes would race each other's row writes, and
+    the worker's own crash-leftover stale-reset would misfire against
+    genuinely in-flight rows. Still 202 (accepted, just not started) —
+    the frontend only needs the status string to tell the two cases apart."""
     with Session(engine) as session:
         if session.get(Project, project_id) is None:
             raise HTTPException(status_code=404, detail="Project not found")
 
+    if is_generation_running(project_id):
+        return {"status": "already_running"}
+
     task = asyncio.create_task(run_batch_generation(project_id))
+    _running_generations[project_id] = task
     _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+
+    def _cleanup(completed_task: asyncio.Task, project_id: str = project_id) -> None:
+        _background_tasks.discard(completed_task)
+        if _running_generations.get(project_id) is completed_task:
+            _running_generations.pop(project_id, None)
+
+    task.add_done_callback(_cleanup)
 
     return {"status": "started"}
+
+
+@app.post("/projects/{project_id}/generate/cancel")
+async def cancel_generation(project_id: str) -> dict:
+    """T-03-27: cancel a live batch run. No-ops ({"status": "not_running"})
+    if nothing is running for this project.
+
+    # ponytail: tts_client.synthesize() is a sync httpx.post wrapped in
+    # run_in_threadpool (300s read timeout) — a Python thread can't be
+    # forcibly interrupted, so cancelling the segment currently mid-synth
+    # only takes effect once that HTTP call returns; this stops progression
+    # to the NEXT segment, it does not abort the in-flight one. Upgrade
+    # path if that ceiling ever matters: an async httpx client with real
+    # request cancellation, or a cancel endpoint on the TTS service itself.
+    """
+    task = get_generation_task(project_id)
+    if task is None:
+        return {"status": "not_running"}
+
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    with Session(engine) as session:
+        still_generating = session.exec(
+            select(Segment)
+            .where(Segment.project_id == project_id)
+            .where(Segment.generation_status == "generating")
+        ).all()
+        for segment in still_generating:
+            segment.generation_status = "pending"
+            session.add(segment)
+        session.commit()
+
+    # "done" (not "error") with a non-"ready" status: useGenerationStream
+    # already treats any non-"ready" done payload as settling to "idle" —
+    # no new client event type needed.
+    await push_generation_event(project_id, "done", {"status": "cancelled"})
+
+    return {"status": "cancelled"}
 
 
 @app.get("/projects/{project_id}/generation-stream", response_class=EventSourceResponse)

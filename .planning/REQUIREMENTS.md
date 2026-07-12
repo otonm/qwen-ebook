@@ -36,7 +36,7 @@
 
 - [ ] **GEN-01**: Each table row's audio segment is generated via self-hosted Qwen TTS running on the AMD GPU host
 - [x] **GEN-02**: Each segment's audio is cached and keyed by a content hash of (character, voice instructions, text, voice/model version); unchanged segments are not regenerated
-- [x] **GEN-03**: Editing a row's Narrator, Voice Instructions, or Text after generation regenerates only that segment, then rejoins the full file (not a full regenerate)
+- [x] **GEN-03**: Editing a row's Narrator, Voice Instructions, or Text after generation invalidates only that segment (clears its stale audio, marks it pending); the user triggers regeneration manually via the per-row or Generate All controls, which rejoins the full file
 - [x] **GEN-04**: Generated segments are joined in table order into a single output audio file (MP3 or WAV)
 - [x] **GEN-05**: Per-segment generation status (pending/queued/generating/complete/error) is persisted so a batch generation run can resume after an interruption or crash
 

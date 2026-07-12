@@ -36,9 +36,38 @@ logger = logging.getLogger(__name__)
 # never share (or collide on) the same queue.
 _generation_progress_queues: dict[str, asyncio.Queue] = {}
 
+# T-03-25/T-03-26: keyed by project_id, tracks the live run_batch_generation
+# task (if any) so a second Generate All (or the worker's own crash-leftover
+# stale-reset) can tell a genuinely in-flight run apart from an orphaned
+# "generating" row. main.py registers into this dict directly and removes
+# the entry via a done-callback, same registry discipline as
+# _generation_progress_queues.
+_running_generations: dict[str, asyncio.Task] = {}
+
 
 def _get_generation_queue(project_id: str) -> asyncio.Queue:
     return _generation_progress_queues.setdefault(project_id, asyncio.Queue())
+
+
+def is_generation_running(project_id: str) -> bool:
+    """True if `project_id` has a live (not-yet-done) run_batch_generation
+    task registered."""
+    task = _running_generations.get(project_id)
+    return task is not None and not task.done()
+
+
+def get_generation_task(project_id: str) -> asyncio.Task | None:
+    return _running_generations.get(project_id)
+
+
+async def push_generation_event(project_id: str, event_type: str, payload: dict) -> None:
+    """Push an event directly onto `project_id`'s progress queue. Used by
+    main.py's cancel endpoint: once a run_batch_generation task is
+    cancelled it must NOT push its own terminal event (asyncio.CancelledError
+    propagates past both `except Exception` blocks below untouched) — the
+    cancel endpoint owns settling the stream instead."""
+    queue = _get_generation_queue(project_id)
+    await queue.put((event_type, payload))
 
 
 def has_pending_generation_queue(project_id: str) -> bool:
@@ -98,7 +127,15 @@ async def run_batch_generation(project_id: str) -> None:
     every segment so a crash mid-run leaves an accurate record and a fresh
     invocation can resume correctly. One segment's synth failure never
     aborts the rest (A4). Ends with a blocking join over the complete
-    segments' audio (Open Question 1)."""
+    segments' audio (Open Question 1).
+
+    Cancellation (T-03-27): asyncio.CancelledError is a BaseException, not
+    an Exception, so it is never caught by the `except Exception` blocks
+    below — cancel() propagates straight out of this coroutine, skipping
+    the rest of the loop AND the blocking join. main.py's cancel endpoint
+    relies on exactly this: it owns the post-cancel row reset and terminal
+    event push (push_generation_event); this function pushes neither on
+    cancellation."""
     # Lazy import: main.py imports this module at module load time, so a
     # top-level `from app.main import regenerate_segment` here would be
     # circular. By the time this coroutine actually runs, app.main has
