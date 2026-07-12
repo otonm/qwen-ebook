@@ -246,6 +246,53 @@ async def get_project(project_id: str):
         return _serialize_project(project, characters, segments)
 
 
+@app.delete("/projects/{project_id}", status_code=204)
+async def delete_project(project_id: str) -> Response:
+    """Delete a project and every generated artifact under it: the
+    project's joined output file, each character's voice preview, and
+    each segment's generated audio. No FK cascade exists on these tables
+    (models.py), so children are deleted explicitly before the parent row.
+
+    A live batch generation for this project is cancelled first (same
+    cancel path as POST /generate/cancel) so its background task can't
+    keep writing rows/files the delete just removed out from under it."""
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        characters = list(
+            session.exec(select(Character).where(Character.project_id == project_id)).all()
+        )
+        segments = list(
+            session.exec(select(Segment).where(Segment.project_id == project_id)).all()
+        )
+
+    task = get_generation_task(project_id)
+    if task is not None:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    for path in (
+        [project.output_path]
+        + [c.preview_audio_path for c in characters]
+        + [s.audio_path for s in segments]
+    ):
+        if path:
+            Path(path).unlink(missing_ok=True)
+
+    with Session(engine) as session:
+        for segment in segments:
+            session.delete(session.get(Segment, segment.id))
+        for character in characters:
+            session.delete(session.get(Character, character.id))
+        session.delete(session.get(Project, project_id))
+        session.commit()
+
+    return Response(status_code=204)
+
+
 async def _require_project_exists(project_id: str) -> None:
     """404 guard for `analysis_stream` (WR-02).
 

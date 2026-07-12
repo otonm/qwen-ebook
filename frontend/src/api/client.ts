@@ -119,6 +119,13 @@ export async function getProject(id: string): Promise<Project> {
   return parseJsonOrThrow(response)
 }
 
+export async function deleteProject(id: string): Promise<void> {
+  const response = await fetch(`/projects/${id}`, { method: "DELETE" })
+  if (!response.ok) {
+    throw new Error(`Request failed with ${response.status}`)
+  }
+}
+
 export async function patchCharacter(
   id: string,
   body: CharacterPatch

@@ -1,7 +1,7 @@
 import { AlertCircle, CheckCircle2, Clock } from "lucide-react"
 import { useEffect, useState } from "react"
 
-import { listProjects, type ProjectSummary } from "@/api/client"
+import { deleteProject, listProjects, type ProjectSummary } from "@/api/client"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -50,6 +50,7 @@ function formatDate(isoDate: string): string {
 export function ProjectListScreen({ onOpen, onNewProject }: ProjectListScreenProps) {
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null)
   const [error, setError] = useState(false)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -65,6 +66,19 @@ export function ProjectListScreen({ onOpen, onNewProject }: ProjectListScreenPro
       cancelled = true
     }
   }, [])
+
+  async function handleDelete(project: ProjectSummary) {
+    if (!window.confirm(`Delete "${project.filename}"? This can't be undone.`)) return
+    setDeletingId(project.id)
+    try {
+      await deleteProject(project.id)
+      setProjects((current) => current?.filter((p) => p.id !== project.id) ?? current)
+    } catch {
+      window.alert("Couldn't delete the project. Check the connection and try again.")
+    } finally {
+      setDeletingId(null)
+    }
+  }
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6 p-6">
@@ -114,6 +128,15 @@ export function ProjectListScreen({ onOpen, onNewProject }: ProjectListScreenPro
                 <ProjectStatusBadge status={project.status} />
                 <Button variant="outline" size="sm" onClick={() => onOpen(project.id)}>
                   Open
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-destructive hover:text-destructive"
+                  disabled={deletingId === project.id}
+                  onClick={() => handleDelete(project)}
+                >
+                  {deletingId === project.id ? "Deleting…" : "Delete"}
                 </Button>
               </div>
             </Card>
