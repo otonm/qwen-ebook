@@ -31,8 +31,19 @@ export interface Project {
   filename: string
   status: "analyzing" | "ready" | "error"
   error_detail: string | null
+  // CFG-01: set once the whole-project batch join (plan 03-03) completes;
+  // output_format is a fixed server setting, not a per-project choice.
+  output_path: string | null
+  output_format: string
   characters: Character[]
   segments: Segment[]
+}
+
+export interface GenerationProgress {
+  segment_id: string
+  n: number
+  total: number
+  status: GenerationStatus
 }
 
 export interface VoicePreset {
@@ -164,5 +175,13 @@ export async function bulkReassignSegments(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ segment_ids: segmentIds, character_id: characterId }),
   })
+  return parseJsonOrThrow(response)
+}
+
+/** CFG-03/GEN-05: kick off (or resume) the whole-project batch generation
+ * run. Fires immediately (202) — progress is pushed over
+ * /projects/{id}/generation-stream, consumed by useGenerationStream. */
+export async function runBatchGeneration(projectId: string): Promise<{ status: string }> {
+  const response = await fetch(`/projects/${projectId}/generate`, { method: "POST" })
   return parseJsonOrThrow(response)
 }

@@ -1,19 +1,22 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 
 import { getProject, type Project, type Segment } from "@/api/client"
+import { ConfigPanel } from "@/components/ConfigPanel"
 import { SegmentTable } from "@/components/SegmentTable"
+import { useGenerationStream } from "@/hooks/useGenerationStream"
 
 interface ProjectScreenProps {
   projectId: string
 }
 
 /** CFG-01/02/03, TBL-01..04: the main editing screen — 70% editable
- * segment table / 30% config panel split (UI-SPEC Layout). The config
- * panel (input file/model/output format, character list, live progress)
- * is plan 03-03's scope; this plan only reserves and labels the region so
- * the split is visible from 03-01 onward. */
+ * segment table / 30% config panel split (UI-SPEC Layout). Live per-segment
+ * status from useGenerationStream is merged into the segments handed to
+ * SegmentTable so a batch run's progress shows up in the table's status
+ * badges without SegmentTable needing to know about the SSE stream. */
 export function ProjectScreen({ projectId }: ProjectScreenProps) {
   const [project, setProject] = useState<Project | null>(null)
+  const generation = useGenerationStream(projectId)
 
   const refetch = useCallback(() => {
     getProject(projectId).then(setProject).catch(() => setProject(null))
@@ -22,6 +25,15 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
   useEffect(() => {
     refetch()
   }, [refetch])
+
+  // The SSE payload only carries {segment_id, n, total, status} — once a
+  // run reaches a terminal state, re-fetch so audio_path/output_path (not
+  // pushed over the stream) land in `project`.
+  useEffect(() => {
+    if (generation.status === "ready" || generation.status === "error") {
+      refetch()
+    }
+  }, [generation.status, refetch])
 
   function handleSegmentChange(updated: Segment) {
     setProject((prev) =>
@@ -35,6 +47,17 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
         : prev
     )
   }
+
+  const liveSegments = useMemo(() => {
+    if (!project) return []
+    if (Object.keys(generation.segmentStatuses).length === 0) return project.segments
+    return project.segments.map((segment) => {
+      const liveStatus = generation.segmentStatuses[segment.id]
+      return liveStatus && liveStatus !== segment.generation_status
+        ? { ...segment, generation_status: liveStatus }
+        : segment
+    })
+  }, [project, generation.segmentStatuses])
 
   if (!project) {
     return (
@@ -50,15 +73,13 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
       <div className="flex flex-col gap-8 xl:flex-row">
         <div className="xl:w-[70%]">
           <SegmentTable
-            segments={project.segments}
+            segments={liveSegments}
             characters={project.characters}
             onSegmentChange={handleSegmentChange}
           />
         </div>
-        <div className="rounded-lg bg-secondary p-4 xl:w-[30%]">
-          <p className="text-xs font-semibold text-muted-foreground">
-            Config panel — coming in a later plan.
-          </p>
+        <div className="xl:w-[30%]">
+          <ConfigPanel project={project} segments={liveSegments} generation={generation} />
         </div>
       </div>
     </div>

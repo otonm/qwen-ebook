@@ -187,6 +187,11 @@ def _serialize_project(
         "filename": project.filename,
         "status": project.status,
         "error_detail": project.error_detail,
+        # CFG-01: the joined batch-generation output (plan 03-03) and the
+        # server's fixed output format/codec choice — both needed by the
+        # config panel, neither previously exposed over the API.
+        "output_path": project.output_path,
+        "output_format": settings.OUTPUT_FORMAT,
         "characters": [_serialize_character(character) for character in characters],
         "segments": [
             _serialize_segment(
