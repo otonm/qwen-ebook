@@ -28,5 +28,9 @@ Environment=DATABASE_URL=sqlite:////data/projects.db
 Environment=UPLOAD_DIR=/data/uploads
 Environment=OUTPUT_DIR=/data/output
 
+[Service]
+# Self-heal on crash rather than staying down (03-UAT.md test 1).
+Restart=on-failure
+
 [Install]
 WantedBy=multi-user.target

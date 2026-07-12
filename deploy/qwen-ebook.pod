@@ -18,6 +18,17 @@ PodName=qwen-ebook
 # path in (DEPL-02, T-03-13). Never change this to 0.0.0.0:8000:8000.
 PublishPort=127.0.0.1:8000:8000
 # TTS port 8001 stays pod-internal — no PublishPort entry for it (T-03-01).
+# Default pod exit-policy is "stop": once both member containers stop (which
+# `systemctl restart` on a member does), the pod's infra container exits and
+# the pod service goes inactive — the members' own restart jobs then fail
+# ("Bound to unit qwen-ebook-pod.service, but unit isn't active"), and
+# nothing self-heals (03-UAT.md test 1 root cause). --exit-policy=continue
+# keeps the pod (and this loopback-only PublishPort) alive across a member
+# restart so a single member can be restarted without tearing the pod down.
+# Whether this key is honored must be confirmed on the VM's Podman version
+# (see deploy/README.md "Tear down / restart" for the documented fallback if
+# not) — PublishPort above stays loopback-only regardless.
+PodmanArgs=--exit-policy=continue
 
 [Install]
 WantedBy=multi-user.target

@@ -30,5 +30,9 @@ AddDevice=/dev/dri
 # Persists the multi-GB Hugging Face model download across restarts.
 Volume=qwen-ebook-tts-hf-cache:/home/ubuntu/.cache/huggingface
 
+[Service]
+# Self-heal on crash rather than staying down (03-UAT.md test 1).
+Restart=on-failure
+
 [Install]
 WantedBy=multi-user.target

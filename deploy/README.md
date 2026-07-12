@@ -232,12 +232,46 @@ on the VM at this step, not taken on faith.
    `.pod` unit binds loopback only), so this should fail by construction,
    but is worth a live check rather than an assumption.
 
+### Persistence
+
+The backend's writable state — SQLite DB, uploads, generated output and
+previews — lives on the `qwen-ebook-data` named volume, mounted at `/data`
+(`deploy/qwen-ebook-backend.container`'s `Volume=` plus `DATABASE_URL=
+sqlite:////data/projects.db` / `UPLOAD_DIR=/data/uploads` / `OUTPUT_DIR=
+/data/output`). It survives container restarts and reboots. Everything else
+in the image (code, the built frontend at `/backend/static`) is ephemeral —
+redeploy by rebuilding the image, not by touching `/data`.
+
 ### Tear down / restart
 
+The pod unit sets `PodmanArgs=--exit-policy=continue`, so restarting a
+single member container no longer tears the whole pod down (03-UAT.md test
+1 blocker) — the member units also carry `Restart=on-failure` to self-heal
+on crash. **Confirm `--exit-policy=continue` is actually honored on this
+host's Podman version** (post-deploy verification below) — Quadlet's key
+set has shifted across Podman 4.4–5.x.
+
+Preferred restart (either works once exit-policy is confirmed):
+
 ```bash
-sudo systemctl stop qwen-ebook-backend.service
+# Whole stack:
+sudo systemctl restart qwen-ebook-pod.service
+# Or a single member (pod stays up thanks to --exit-policy=continue):
 sudo systemctl restart qwen-ebook-backend.service
 ```
 
-Stopping/restarting the backend unit tears down/brings back the whole pod
-via the `Requires=`/`After=` ordering in the unit files.
+**Fallback if the pod ever goes fully down** (e.g. `--exit-policy=continue`
+is not honored on this Podman version — start units in this order):
+
+```bash
+sudo systemctl start qwen-ebook-pod.service
+sudo systemctl start qwen-ebook-tts.service
+sudo systemctl start qwen-ebook-backend.service
+```
+
+After any restart, verify self-heal + data survival:
+
+```bash
+curl 127.0.0.1:8000/healthz    # -> 200
+curl 127.0.0.1:8000/projects   # -> still lists projects created before the restart
+```
