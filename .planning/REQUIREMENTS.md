@@ -38,7 +38,7 @@
 - [ ] **GEN-02**: Each segment's audio is cached and keyed by a content hash of (character, voice instructions, text, voice/model version); unchanged segments are not regenerated
 - [ ] **GEN-03**: Editing a row's Narrator, Voice Instructions, or Text after generation regenerates only that segment, then rejoins the full file (not a full regenerate)
 - [x] **GEN-04**: Generated segments are joined in table order into a single output audio file (MP3 or WAV)
-- [ ] **GEN-05**: Per-segment generation status (pending/queued/generating/complete/error) is persisted so a batch generation run can resume after an interruption or crash
+- [x] **GEN-05**: Per-segment generation status (pending/queued/generating/complete/error) is persisted so a batch generation run can resume after an interruption or crash
 
 ### Persistence
 
@@ -47,9 +47,9 @@
 
 ### Config & Progress
 
-- [ ] **CFG-01**: Right-side panel (~30% width) holds configuration: input file, TTS model, output format, output file
-- [ ] **CFG-02**: Right-side panel shows the list of defined characters with their voice preview controls (see WIZ-04/WIZ-05)
-- [ ] **CFG-03**: Right-side panel shows live progress of the current conversion (per-segment and overall)
+- [x] **CFG-01**: Right-side panel (~30% width) holds configuration: input file, TTS model, output format, output file
+- [x] **CFG-02**: Right-side panel shows the list of defined characters with their voice preview controls (see WIZ-04/WIZ-05)
+- [x] **CFG-03**: Right-side panel shows live progress of the current conversion (per-segment and overall)
 
 ### Deployment
 
@@ -114,12 +114,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TBL-04 | Phase 3 | Pending |
 | GEN-02 | Phase 3 | Pending |
 | GEN-03 | Phase 3 | Pending |
-| GEN-05 | Phase 3 | Pending |
+| GEN-05 | Phase 3 | Complete |
 | PERS-01 | Phase 3 | Pending |
 | PERS-02 | Phase 3 | Pending |
-| CFG-01 | Phase 3 | Pending |
-| CFG-02 | Phase 3 | Pending |
-| CFG-03 | Phase 3 | Pending |
+| CFG-01 | Phase 3 | Complete |
+| CFG-02 | Phase 3 | Complete |
+| CFG-03 | Phase 3 | Complete |
 | DEPL-02 | Phase 3 | Pending |
 
 **Coverage:**

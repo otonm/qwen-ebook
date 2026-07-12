@@ -86,7 +86,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. A right-side config panel (~30% width) shows input file/model/output format/output file, the character list with preview controls, and live per-segment and overall progress during a conversion; a batch generation run resumes correctly from where it left off after an interruption or crash, because per-segment status (pending/queued/generating/complete/error) is persisted
   5. Projects (source text, cast with voice assignments, segment table, cached per-segment audio, joined output) are auto-saved as the user works and can be reopened later to continue exactly where they left off, all reachable only over the user's Tailscale network with no public exposure or added auth layer
 
-**Plans**: 2/5 plans executed
+**Plans**: 3/5 plans executed
 
 **Wave 1**
 
@@ -98,7 +98,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 3** *(blocked on Wave 1; sequential with Wave 2 via shared main.py/client.ts)*
 
-  - [ ] 03-03-PLAN.md — Resumable batch generation, live SSE progress, right-side config panel + join (GEN-05, CFG-01/02/03)
+  - [x] 03-03-PLAN.md — Resumable batch generation, live SSE progress, right-side config panel + join (GEN-05, CFG-01/02/03)
 
 **Wave 4** *(blocked on Waves 1+3)*
 
@@ -119,4 +119,4 @@ Phases execute in numeric order: 1 → 2 → 3
 |-------|----------------|--------|-----------|
 | 1. Upload-to-Audio Spike (TTS/ROCm De-risk) | 3/3 | Complete   | 2026-07-09 |
 | 2. LLM Cast Detection & Review Wizard | 5/5 | Complete   | 2026-07-10 |
-| 3. Editable Table, Full Generation Pipeline, Persistence & Deployment | 2/5 | In Progress|  |
+| 3. Editable Table, Full Generation Pipeline, Persistence & Deployment | 3/5 | In Progress|  |
