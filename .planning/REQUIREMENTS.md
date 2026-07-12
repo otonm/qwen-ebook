@@ -42,8 +42,8 @@
 
 ### Persistence
 
-- [ ] **PERS-01**: Projects (source text, character cast with voice assignments, segment table, cached per-segment audio, joined output) are saved automatically as the user works
-- [ ] **PERS-02**: User can reopen a previously saved project and continue editing/generating from where they left off — single user, no accounts
+- [x] **PERS-01**: Projects (source text, character cast with voice assignments, segment table, cached per-segment audio, joined output) are saved automatically as the user works
+- [x] **PERS-02**: User can reopen a previously saved project and continue editing/generating from where they left off — single user, no accounts
 
 ### Config & Progress
 
@@ -115,8 +115,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | GEN-02 | Phase 3 | Pending |
 | GEN-03 | Phase 3 | Pending |
 | GEN-05 | Phase 3 | Complete |
-| PERS-01 | Phase 3 | Pending |
-| PERS-02 | Phase 3 | Pending |
+| PERS-01 | Phase 3 | Complete |
+| PERS-02 | Phase 3 | Complete |
 | CFG-01 | Phase 3 | Complete |
 | CFG-02 | Phase 3 | Complete |
 | CFG-03 | Phase 3 | Complete |

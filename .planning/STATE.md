@@ -6,14 +6,14 @@ current_phase: 03
 current_phase_name: editable-table-full-generation-pipeline-persistence-deployme
 status: executing
 stopped_at: Phase 3 Plan 1 complete (real-GPU checkpoint verified)
-last_updated: "2026-07-12T10:07:50.872Z"
+last_updated: "2026-07-12T10:13:35.971Z"
 last_activity: 2026-07-12
 last_activity_desc: Phase 03 execution started
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 13
-  completed_plans: 11
+  completed_plans: 12
   percent: 67
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-11)
 ## Current Position
 
 Phase: 03 (editable-table-full-generation-pipeline-persistence-deployme) — EXECUTING
-Plan: 3 of 5
+Plan: 4 of 5
 Status: Ready to execute
 Last activity: 2026-07-12 — Phase 03 execution started
 
@@ -57,6 +57,7 @@ Progress: [███████░░░] 69%
 *Updated after each plan completion*
 | Phase 03 P02 | 15 | 2 tasks | 4 files |
 | Phase 03 P03 | ~4min+checkpoint | 4 tasks | 7 files |
+| Phase 03 P04 | 10min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -71,6 +72,8 @@ Recent decisions affecting current work:
 - [Phase ?]: Radix Checkbox onCheckedChange passes a boolean, not a DOM event — wired via table.toggleAllRowsSelected(!!value)/row.toggleSelected(!!value) instead of the research pattern's getToggleXSelectedHandler()
 - [Phase ?]: Batch loop reuses main.py's regenerate_segment (lazy in-function import) instead of duplicating cache-check/version-guard logic - one implementation for both per-row and batch call sites
 - [Phase ?]: Task 4's real-GPU checkpoint (crash-resume + concurrent-edit-race) was run by the orchestrator directly on the production tts VM, automated via seeded throwaway projects + podman restart + TTS-container log inspection
+- [Phase ?]: Project.created_at already existed from plan 03-01 — no schema change needed for plan 03-04's list endpoint
+- [Phase ?]: Landing-with-no-project routing uses a separate in-memory LandingView state (list/upload) rather than overloading localStorage-backed projectId, so a mid-upload refresh lands back on the project list
 
 ### Pending Todos
 
@@ -103,7 +106,7 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-12T10:07:14.800Z
+Last session: 2026-07-12T10:13:05.668Z
 Stopped at: Phase 3 UI-SPEC approved
 Resume file: .planning/phases/03-editable-table-full-generation-pipeline-persistence-deployme/03-UI-SPEC.md
 Next step: /gsd-plan-phase 3
