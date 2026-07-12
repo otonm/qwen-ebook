@@ -2,6 +2,7 @@ import {
   createColumnHelper,
   flexRender,
   getCoreRowModel,
+  type RowSelectionState,
   useReactTable,
 } from "@tanstack/react-table"
 import {
@@ -15,6 +16,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react"
 
 import {
+  bulkReassignSegments,
   generateSegment,
   patchSegment,
   segmentAudioUrl,
@@ -24,6 +26,7 @@ import {
 } from "@/api/client"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Select,
   SelectContent,
@@ -237,11 +240,72 @@ function EditableTextCell({
   )
 }
 
-/** TBL-01/02/04, GEN-02/03: the editable segment table — extends
+/** TBL-03: 48px bulk-action toolbar (UI-SPEC), rendered above the table
+ * only while 1+ rows are selected. Non-destructive, no confirmation
+ * dialog — matches D-06's "no separate Save/confirm" copywriting
+ * contract already used for per-cell edits. */
+function BulkReassignToolbar({
+  selectedIds,
+  characters,
+  onReassigned,
+}: {
+  selectedIds: string[]
+  characters: Character[]
+  onReassigned: (characterId: string) => void
+}) {
+  const [targetId, setTargetId] = useState<string>("")
+  const [isReassigning, setIsReassigning] = useState(false)
+
+  async function handleConfirm() {
+    if (!targetId) return
+    setIsReassigning(true)
+    try {
+      await bulkReassignSegments(selectedIds, targetId)
+      onReassigned(targetId)
+    } finally {
+      setIsReassigning(false)
+    }
+  }
+
+  return (
+    <div className="mb-2 flex h-12 items-center gap-3 rounded-lg bg-secondary px-3">
+      <span className="text-xs font-semibold text-muted-foreground">
+        {selectedIds.length} selected
+      </span>
+      <Select value={targetId} onValueChange={setTargetId}>
+        <SelectTrigger size="sm" aria-label="Reassign narrator to">
+          <SelectValue placeholder="Reassign narrator to…" />
+        </SelectTrigger>
+        <SelectContent>
+          {characters.map((character) => (
+            <SelectItem key={character.id} value={character.id}>
+              {character.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Button
+        type="button"
+        size="sm"
+        disabled={!targetId || isReassigning}
+        onClick={() => void handleConfirm()}
+      >
+        {isReassigning ? (
+          <Loader2 className="animate-spin" />
+        ) : (
+          `Reassign ${selectedIds.length} segment${selectedIds.length === 1 ? "" : "s"}`
+        )}
+      </Button>
+    </div>
+  )
+}
+
+/** TBL-01/02/03/04, GEN-02/03: the editable segment table — extends
  * SegmentPreview.tsx's read-only TanStack setup with editable Narrator/
- * Voice Instructions/Text cells (commit onBlur) and a per-row generate/
- * play control. Bulk row selection (TBL-03) is a later plan's scope. */
+ * Voice Instructions/Text cells (commit onBlur), a per-row generate/play
+ * control, and checkbox row selection + bulk-reassign toolbar. */
 export function SegmentTable({ segments, characters, onSegmentChange }: SegmentTableProps) {
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
   const data = useMemo(
     () => [...segments].sort((a, b) => a.order - b.order),
     [segments]
@@ -249,6 +313,23 @@ export function SegmentTable({ segments, characters, onSegmentChange }: SegmentT
 
   const columns = useMemo(
     () => [
+      columnHelper.display({
+        id: "select",
+        header: ({ table }) => (
+          <Checkbox
+            checked={table.getIsAllRowsSelected()}
+            onCheckedChange={(value) => table.toggleAllRowsSelected(!!value)}
+            aria-label="Select all segments"
+          />
+        ),
+        cell: ({ row }) => (
+          <Checkbox
+            checked={row.getIsSelected()}
+            onCheckedChange={(value) => row.toggleSelected(!!value)}
+            aria-label={`Select segment ${row.original.order + 1}`}
+          />
+        ),
+      }),
       columnHelper.display({
         id: "narrator",
         header: "Narrator",
@@ -307,11 +388,37 @@ export function SegmentTable({ segments, characters, onSegmentChange }: SegmentT
     columns,
     getCoreRowModel: getCoreRowModel(),
     getRowId: (segment) => segment.id,
+    state: { rowSelection },
+    onRowSelectionChange: setRowSelection,
   })
+
+  const selectedIds = Object.keys(rowSelection)
+
+  function handleReassigned(targetCharacterId: string) {
+    const targetName =
+      characters.find((character) => character.id === targetCharacterId)?.name ?? null
+    for (const segment of segments) {
+      if (selectedIds.includes(segment.id)) {
+        onSegmentChange({
+          ...segment,
+          character_id: targetCharacterId,
+          character_name: targetName,
+        })
+      }
+    }
+    setRowSelection({})
+  }
 
   return (
     <div>
       <h2 className="mb-3 text-lg font-semibold">Segments</h2>
+      {selectedIds.length > 0 && (
+        <BulkReassignToolbar
+          selectedIds={selectedIds}
+          characters={characters}
+          onReassigned={handleReassigned}
+        />
+      )}
       <Table>
         <TableHeader>
           {table.getHeaderGroups().map((headerGroup) => (

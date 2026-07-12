@@ -154,3 +154,15 @@ export async function generateSegment(id: string): Promise<Segment> {
 export function segmentAudioUrl(id: string): string {
   return `/segments/${id}/audio.wav`
 }
+
+export async function bulkReassignSegments(
+  segmentIds: string[],
+  characterId: string
+): Promise<{ updated: number }> {
+  const response = await fetch("/segments/bulk-reassign", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ segment_ids: segmentIds, character_id: characterId }),
+  })
+  return parseJsonOrThrow(response)
+}
