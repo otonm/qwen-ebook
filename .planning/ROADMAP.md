@@ -131,4 +131,4 @@ Phases execute in numeric order: 1 → 2 → 3
 |-------|----------------|--------|-----------|
 | 1. Upload-to-Audio Spike (TTS/ROCm De-risk) | 3/3 | Complete   | 2026-07-09 |
 | 2. LLM Cast Detection & Review Wizard | 5/5 | Complete   | 2026-07-10 |
-| 3. Editable Table, Full Generation Pipeline, Persistence & Deployment | 9/9 | Complete   | 2026-07-12 |
+| 3. Editable Table, Full Generation Pipeline, Persistence & Deployment | 9/9 | Complete    | 2026-07-12 |
