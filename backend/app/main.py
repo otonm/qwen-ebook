@@ -679,6 +679,42 @@ async def generate_segment(segment_id: str) -> dict:
         return _serialize_segment(segment, character.name if character else None)
 
 
+class BulkReassignRequest(BaseModel):
+    segment_ids: list[str]
+    character_id: str
+
+
+@app.post("/segments/bulk-reassign")
+async def bulk_reassign_segments(body: BulkReassignRequest) -> dict:
+    """TBL-03 bulk toolbar action. Mirrors merge_character's ownership
+    discipline (T-03-04): every segment must belong to the target
+    character's project, or the whole request is rejected and nothing is
+    changed. Only bumps generation_version to mark rows stale — batch
+    regen is plan 03-03's job, not this endpoint's."""
+    with Session(engine) as session:
+        target = session.get(Character, body.character_id)
+        if target is None:
+            raise HTTPException(status_code=404, detail="Character not found")
+
+        segments = list(
+            session.exec(select(Segment).where(Segment.id.in_(body.segment_ids))).all()
+        )
+        if len(segments) != len(body.segment_ids):
+            raise HTTPException(status_code=404, detail="Segment not found")
+        if any(segment.project_id != target.project_id for segment in segments):
+            raise HTTPException(
+                status_code=400, detail="Segment does not belong to the target's project"
+            )
+
+        for segment in segments:
+            segment.character_id = target.id
+            segment.generation_version += 1
+            session.add(segment)
+        session.commit()
+
+    return {"updated": len(segments)}
+
+
 @app.get("/segments/{segment_id}/audio.wav")
 async def get_segment_audio(segment_id: str) -> Response:
     with Session(engine) as session:
