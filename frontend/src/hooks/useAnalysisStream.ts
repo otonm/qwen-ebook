@@ -34,6 +34,10 @@ function initialState(): AnalysisStreamState {
 export function useAnalysisStream(projectId: string | null): AnalysisStreamState {
   const [state, setState] = useState<AnalysisStreamState>(initialState)
   const sourceRef = useRef<EventSource | null>(null)
+  // T-03-23/T-03-24: guards a single in-flight confirmation fetch per error
+  // burst so a no-data EventSource error probes the project at most once
+  // instead of firing on every reconnect attempt.
+  const probingRef = useRef(false)
 
   useEffect(() => {
     if (!projectId) return undefined
@@ -44,6 +48,7 @@ export function useAnalysisStream(projectId: string | null): AnalysisStreamState
     // set-state-in-effect lint rule flags this canonical pattern anyway.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setState(initialState())
+    probingRef.current = false
 
     const source = new EventSource(`/projects/${projectId}/analysis-stream`)
     sourceRef.current = source
@@ -72,9 +77,27 @@ export function useAnalysisStream(projectId: string | null): AnalysisStreamState
     source.addEventListener("error", (event) => {
       const messageEvent = event as MessageEvent
       if (!messageEvent.data) {
-        // Native EventSource connection-drop (no server-sent payload) — a
-        // transient network hiccup, not a real analysis failure. Let
-        // EventSource's built-in reconnect proceed instead of closing.
+        // Native EventSource connection-drop (no server-sent payload) — could
+        // be a transient network hiccup (let EventSource reconnect) or a
+        // permanent 404 for a stale/deleted projectId (reconnects forever
+        // otherwise). Disambiguate with a single guarded confirmation fetch.
+        if (probingRef.current) return
+        probingRef.current = true
+        getProject(projectId)
+          .then(() => {
+            // Project still exists — genuinely transient, keep reconnecting.
+            probingRef.current = false
+          })
+          .catch(() => {
+            // Project is gone — permanent failure, stop retrying and surface
+            // the existing error/recover UI (App.tsx's ErrorScreen).
+            setState((prev) => ({
+              ...prev,
+              status: "error",
+              errorDetail: "This project no longer exists.",
+            }))
+            source.close()
+          })
         return
       }
       const detail = JSON.parse(messageEvent.data)?.detail ?? "Analysis failed"
