@@ -555,15 +555,18 @@ class SegmentPatch(BaseModel):
 
 @app.patch("/segments/{segment_id}")
 async def patch_segment(segment_id: str, patch: SegmentPatch) -> dict:
-    """TBL-01/02 editable-cell commit, GEN-03/D-06 auto-regenerate-on-blur
-    — mirrors patch_character's shape (bump version, fire a race-safe
-    background regen) rather than reinventing it for segments."""
+    """TBL-01/02 editable-cell commit. GEN-03 (D-06 REVERSED during 03 UAT
+    — see 03-CONTEXT.md): an edit INVALIDATES the row's stale audio (clears
+    it, marks the row pending) but does NOT auto-fire a background
+    regeneration — the user triggers that manually via the per-row or
+    Generate All controls."""
     any_changed = (
         patch.character_id is not None
         or patch.voice_instructions is not None
         or patch.text is not None
     )
 
+    old_audio_path: str | None = None
     with Session(engine) as session:
         segment = session.get(Segment, segment_id)
         if segment is None:
@@ -577,19 +580,26 @@ async def patch_segment(segment_id: str, patch: SegmentPatch) -> dict:
             segment.text = patch.text
         if any_changed:
             segment.generation_version += 1
-            segment.generation_status = "generating"
+            segment.generation_status = "pending"
+            segment.generation_error = None
+            # Clear the stale audio — a cleared audio_path is sufficient to
+            # force a cache miss on the next manual generate (it recomputes
+            # the cache key from live DB state and checks the file exists
+            # on disk); cache_key itself is left for regenerate_segment to
+            # recompute, same as everywhere else.
+            old_audio_path = segment.audio_path
+            segment.audio_path = None
 
         session.add(segment)
         session.commit()
         session.refresh(segment)
         character = session.get(Character, segment.character_id)
         result = _serialize_segment(segment, character.name if character else None)
-        version = segment.generation_version
 
-    if any_changed:
-        task = asyncio.create_task(regenerate_segment(segment_id, version))
-        _background_tasks.add(task)
-        task.add_done_callback(_background_tasks.discard)
+    if old_audio_path:
+        # Mirrors regenerate_segment's post-commit unlink pattern — the
+        # invalidated file must not leak on disk.
+        Path(old_audio_path).unlink(missing_ok=True)
 
     return result
 

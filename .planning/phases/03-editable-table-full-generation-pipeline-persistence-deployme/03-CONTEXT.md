@@ -29,6 +29,7 @@ Builds directly on Phase 2's cast/segment data (`Character`/`Segment` SQLModel t
 
 ### Regeneration Trigger (GEN-03)
 - **D-06:** Auto-regenerate on blur — editing a row's Narrator/Voice Instructions/Text and clicking away triggers that row's regeneration automatically in the background, consistent with Phase 2's autosave-on-blur pattern for character fields (no separate "Save" or "confirm regenerate" step). This applies per-row; it is not the same action as the batch "generate all" run.
+  - **REVERSED during 03 UAT (test 6, gap-closure plan 03-08):** an edit now only INVALIDATES the row — it clears the stale audio and marks the row pending, but does NOT auto-fire a background regeneration. The user triggers regeneration manually via the per-row or Generate All controls, which then rejoins the full file. GEN-03's requirement text was updated to match (see REQUIREMENTS.md).
 - Whether/how a still-generating row's background regeneration interacts with a concurrently-running batch generation pass (e.g., does an edit mid-batch queue-jump or wait) is Claude's discretion during planning — no specific interleaving behavior was dictated. Note this against D-02: this exact interaction is one of the "never tested against real GPU inference" gaps flagged above and should get real-hardware coverage during this phase, not just a mock-backend unit test.
 
 ### Claude's Discretion

@@ -1,7 +1,8 @@
-"""Per-segment generation, content-hash cache, and regenerate-on-edit tests
-(Plan 03-01): POST /segments/{id}/generate, PATCH /segments/{id} auto-
-regen-on-blur (GEN-03/D-06), cache hit/bust via compute_cache_key (GEN-02),
-and the generation_version last-request-wins guard (Pitfall 2).
+"""Per-segment generation, content-hash cache, and edit-invalidates tests
+(Plan 03-01, updated 03-08): POST /segments/{id}/generate, PATCH
+/segments/{id} invalidate-only (GEN-03, D-06 reversed during 03 UAT — see
+03-CONTEXT.md), cache hit/bust via compute_cache_key (GEN-02), and the
+generation_version last-request-wins guard (Pitfall 2).
 
 Runs entirely against TTS_BACKEND=mock so it needs no GPU — same discipline
 as test_wizard_endpoints.py. Segments are seeded directly through a Session
@@ -108,9 +109,12 @@ def test_generate_segment_produces_audio():
 
 
 def test_regenerate_only_on_edit_reuses_cache():
+    """A patch never regenerates (see test_patch_invalidates_without_
+    regenerating below), so "cache reuse" is now exercised directly at the
+    generate endpoint: calling POST .../generate twice with no edit in
+    between must hit the cache (no rewrite, same file/mtime)."""
     seed = _seed_segment()
     segment_id = seed["segment_id"]
-    character_id = seed["character_id"]
 
     assert client.post(f"/segments/{segment_id}/generate").status_code == 200
 
@@ -119,20 +123,8 @@ def test_regenerate_only_on_edit_reuses_cache():
     cache_key_before = before.cache_key
     mtime_before = Path(audio_path_before).stat().st_mtime_ns
 
-    # PATCH with the exact same values already on the row — a no-op edit
-    # that still bumps generation_version and fires a background regen,
-    # but must resolve to the same cache key (cache hit, no rewrite).
-    patch_response = client.patch(
-        f"/segments/{segment_id}",
-        json={
-            "character_id": character_id,
-            "voice_instructions": "calm",
-            "text": "Hello there.",
-        },
-    )
-    assert patch_response.status_code == 200
-
-    time.sleep(0.3)  # let the background regen (cache hit) settle
+    second_response = client.post(f"/segments/{segment_id}/generate")
+    assert second_response.status_code == 200
 
     after = _get_segment(segment_id)
     assert after.cache_key == cache_key_before
@@ -151,8 +143,11 @@ def test_edit_text_busts_cache():
         f"/segments/{segment_id}", json={"text": "A brand new line."}
     )
     assert patch_response.status_code == 200
+    # Invalidate-only: no synthesis happens as a side effect of the patch.
+    assert _get_segment(segment_id).audio_path is None
 
-    time.sleep(0.3)  # let the background regen (cache miss) settle
+    generate_response = client.post(f"/segments/{segment_id}/generate")
+    assert generate_response.status_code == 200
 
     after = _get_segment(segment_id)
     assert after.generation_status == "complete"
@@ -164,35 +159,69 @@ def test_edit_text_busts_cache():
 
 def test_patch_bumps_generation_version(monkeypatch):
     """Two rapid PATCHes must leave generation_version incremented by 2,
-    and a slower stale in-flight regen (older version) must not clobber
-    the faster, newer regen's audio once both settle — mirrors
-    test_wizard_endpoints.py's test_rapid_reassignment_race_last_wins."""
+    with no synthesis call fired by either — a patch invalidates only."""
 
-    def _controlled_synthesize(text: str, speaker: str) -> bytes:
-        if "slow" in text:
-            time.sleep(0.3)
-            return b"SLOW-AUDIO-BYTES"
-        time.sleep(0.02)
-        return b"FAST-AUDIO-BYTES"
+    call_count = {"n": 0}
 
-    monkeypatch.setattr("app.main.synthesize", _controlled_synthesize)
+    def _counting_synthesize(text: str, speaker: str) -> bytes:
+        call_count["n"] += 1
+        return b"SHOULD-NOT-BE-CALLED"
+
+    monkeypatch.setattr("app.main.synthesize", _counting_synthesize)
 
     seed = _seed_segment(text="original")
     segment_id = seed["segment_id"]
     version_before = _get_segment(segment_id).generation_version
 
-    first = client.patch(f"/segments/{segment_id}", json={"text": "slow edit"})
+    first = client.patch(f"/segments/{segment_id}", json={"text": "edit one"})
     assert first.status_code == 200
-    second = client.patch(f"/segments/{segment_id}", json={"text": "fast edit"})
+    second = client.patch(f"/segments/{segment_id}", json={"text": "edit two"})
     assert second.status_code == 200
-
-    # Give both background regenerations (slow ~0.3s, fast ~0.02s) time to
-    # fully settle before asserting the final state.
-    time.sleep(0.5)
 
     segment = _get_segment(segment_id)
     assert segment.generation_version == version_before + 2
-    assert Path(segment.audio_path).read_bytes() == b"FAST-AUDIO-BYTES"
+    assert segment.generation_status == "pending"
+    assert segment.audio_path is None
+    assert call_count["n"] == 0
+
+
+# --- Patch invalidates only, no auto-regeneration (GEN-03/D-06 reversed) -
+
+
+def test_patch_invalidates_without_regenerating(monkeypatch):
+    call_count = {"n": 0}
+
+    def _counting_synthesize(text: str, speaker: str) -> bytes:
+        call_count["n"] += 1
+        return b"AUDIO-BYTES"
+
+    monkeypatch.setattr("app.main.synthesize", _counting_synthesize)
+
+    seed = _seed_segment()
+    segment_id = seed["segment_id"]
+
+    assert client.post(f"/segments/{segment_id}/generate").status_code == 200
+    assert call_count["n"] == 1
+    generated = _get_segment(segment_id)
+    assert generated.audio_path is not None
+    old_audio_path = generated.audio_path
+
+    patch_response = client.patch(
+        f"/segments/{segment_id}", json={"text": "A different line."}
+    )
+    assert patch_response.status_code == 200
+    body = patch_response.json()
+    assert body["generation_status"] == "pending"
+    assert body["audio_path"] is None
+
+    # No synthesis call happened as a side effect of the patch.
+    assert call_count["n"] == 1
+
+    patched = _get_segment(segment_id)
+    assert patched.generation_status == "pending"
+    assert patched.audio_path is None
+    # The stale file was unlinked, not just detached from the row.
+    assert not Path(old_audio_path).exists()
 
 
 # --- POST /segments/bulk-reassign (TBL-03) --------------------------------
