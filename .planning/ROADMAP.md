@@ -86,7 +86,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. A right-side config panel (~30% width) shows input file/model/output format/output file, the character list with preview controls, and live per-segment and overall progress during a conversion; a batch generation run resumes correctly from where it left off after an interruption or crash, because per-segment status (pending/queued/generating/complete/error) is persisted
   5. Projects (source text, cast with voice assignments, segment table, cached per-segment audio, joined output) are auto-saved as the user works and can be reopened later to continue exactly where they left off, all reachable only over the user's Tailscale network with no public exposure or added auth layer
 
-**Plans**: 5/5 plans complete
+**Plans**: 5/5 original plans complete; 4 gap-closure plans added from 03-UAT.md (03-06..03-09)
 
 **Wave 1**
 
@@ -107,6 +107,18 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Wave 5** *(blocked on Wave 4 — deploys the complete app)*
 
   - [x] 03-05-PLAN.md — Podman Quadlet units + Tailscale-only exposure, human-verified on the production GPU VM (DEPL-02)
+
+**Gap closure (from 03-UAT.md diagnosed blockers/majors)**
+
+*Wave 1 (parallel — no file overlap):*
+
+  - [ ] 03-06-PLAN.md — Backend persistent data volume + restart-resilient Quadlet units, VM-verified (DEPL-02/PERS-01/02) [blocker: test 1]
+  - [ ] 03-07-PLAN.md — Recover from stale/stuck analysis stream (permanent-404 vs transient drop) (PERS-01/02) [blocker: test 3]
+  - [ ] 03-08-PLAN.md — Backend generation lifecycle: invalidate-on-edit (reverses D-06/GEN-03), concurrency guard, batch cancel, on-demand preview endpoint (GEN-02/03/05, CFG-03) [major: tests 4, 6]
+
+*Wave 2 (blocked on 03-08):*
+
+  - [ ] 03-09-PLAN.md — Frontend generation controls: status-driven per-row buttons, Generate All guard, Stop, on-demand preview (TBL-04, CFG-02/03, GEN-05) [major: test 4]
 
 **UI hint**: yes
 
