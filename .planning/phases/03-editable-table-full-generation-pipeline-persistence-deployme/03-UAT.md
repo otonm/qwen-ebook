@@ -1,9 +1,9 @@
 ---
-status: diagnosed
+status: resolved
 phase: 03-editable-table-full-generation-pipeline-persistence-deployme
-source: [03-01-SUMMARY.md, 03-02-SUMMARY.md, 03-03-SUMMARY.md, 03-04-SUMMARY.md, 03-05-SUMMARY.md]
+source: [03-01-SUMMARY.md, 03-02-SUMMARY.md, 03-03-SUMMARY.md, 03-04-SUMMARY.md, 03-05-SUMMARY.md, 03-06-SUMMARY.md, 03-07-SUMMARY.md, 03-08-SUMMARY.md, 03-09-SUMMARY.md]
 started: 2026-07-12T11:04:11Z
-updated: 2026-07-12T12:45:41Z
+updated: 2026-07-12T15:37:35Z
 ---
 
 ## Current Test
@@ -132,7 +132,7 @@ blocked: 0
 ## Gaps
 
 - truth: "Kill any running server/service, start from scratch, server boots without errors and a primary query returns live data."
-  status: failed
+  status: resolved
   reason: "User reported: restarting qwen-ebook-backend.service + qwen-ebook-tts.service via systemd tore down qwen-ebook-pod.service (ExitPolicy=stop) and did not self-heal — 'Dependency failed', app stayed fully down until units were manually started in the correct order (pod, then tts, then backend). Additionally, qwen-ebook-backend runs with Podman AutoRemove=true and no volume/bind mount for its SQLite DB/uploads/output — any future restart that hits real project data will silently destroy it (no persistent state, unlike the TTS unit's HF-cache volume)."
   severity: blocker
   test: 1
@@ -148,7 +148,7 @@ blocked: 0
   debug_session: ""
 
 - truth: "Opening the app resumes the user's in-progress project or shows the project list — it never gets permanently stuck."
-  status: failed
+  status: resolved
   reason: "User reported: when i open the app, i only get \"Analyzing your book...\" — never reached the segment table. Root cause: stale localStorage qwen-ebook:projectId points at a project that no longer exists server-side (GET /projects returns []); the analysis-stream 404s, but useAnalysisStream.ts's EventSource error handler (line 74-78) treats the resulting no-data error event as a transient network hiccup and silently no-ops, leaving the UI stuck on the Analyzing screen forever with no recovery path."
   severity: blocker
   test: 3
@@ -161,7 +161,7 @@ blocked: 0
   debug_session: ""
 
 - truth: "Preview controls on the Config Panel's character list let the user hear a character's assigned voice."
-  status: failed
+  status: resolved
   reason: "User reported: the preview controls on the character list have no effect. Root cause: preview_audio_path is null for both characters in the live test project (never set) — CharacterPreviewRow's Play button is disabled whenever hasPreview is false (ConfigPanel.tsx:54) with no tooltip/explanation, and preview audio is only ever generated as a side effect of editing a character's voice_instructions in the separate CastWizard (Review Cast) screen, which the Config Panel gives no hint of and no way to trigger from."
   severity: major
   test: 4
@@ -174,7 +174,7 @@ blocked: 0
   debug_session: ""
 
 - truth: "Pressing Generate All while a segment is already generating is safely handled — either blocked with a warning, or queued without corrupting state."
-  status: failed
+  status: resolved
   reason: "User reported: if i press generate all when a segment is beeing generated, nothing happens (no warning, no change on the ui). Root cause: POST /projects/{id}/generate (generate_project in main.py) has no in-flight guard — it unconditionally spawns a new run_batch_generation task every call. run_batch_generation's own stale-reset step (generation_worker.py:115-124) unconditionally resets any 'generating' row back to 'pending', assuming a crash leftover; it cannot distinguish that from a genuinely in-flight per-row generate_segment call, so a second Generate All click races the already-running work instead of being blocked. The frontend's isRunning guard (ConfigPanel.tsx:94) only reflects the batch SSE stream's status, not any per-row 'generating' segment, so the button isn't even disabled in that case."
   severity: major
   test: 4
@@ -192,7 +192,7 @@ blocked: 0
   debug_session: ""
 
 - truth: "The per-row Play/Generate button never fires a second generate call for a segment that is already generating."
-  status: failed
+  status: resolved
   reason: "User reported (continuation of test 4): the play button next to the generating... message is enabled and clicking it starts a spinner. Root cause: SegmentTable.tsx's GeneratePlayButton tracks its own local isGenerating state (line 95), set true only for the duration of ITS OWN await generateSegment() call — it never reads segment.generation_status at all. So when a row is already 'generating' via a batch run (or any other source), hasAudio is still false (audio_path not set yet), the button is NOT disabled, and clicking it calls POST /segments/{id}/generate a second time for the same segment that's already being synthesized — a second concurrent write racing the first."
   severity: major
   test: 4
@@ -205,7 +205,7 @@ blocked: 0
   debug_session: ""
 
 - truth: "A running generation (single-row or batch) can be cancelled by the user, stopping the underlying work rather than just detaching the UI."
-  status: failed
+  status: resolved
   reason: "User requested (continuation of test 4): allow canceling/stopping the generation at any point which completely stops any processes/threads. This is a new capability — no cancel/stop endpoint or UI control exists anywhere in the current implementation (checked main.py and generation_worker.py: generate_segment and run_batch_generation both run to completion once started, with no cancellation token or abort path)."
   severity: minor
   test: 4
@@ -216,7 +216,7 @@ blocked: 0
   debug_session: ""
 
 - truth: "Editing a segment's text/voice-instructions/narrator invalidates its stale audio but does NOT auto-start a new generation — generation is user-triggered only."
-  status: failed
+  status: resolved
   reason: "User requested (confirmed as an intentional requirement change, not a one-off annoyance): when i edit the segment text and then leave the field, a new generation is started. expected behavior: remove previous segment audio if present and reset the state. the user has to trigger the generation manually. This reverses documented decision D-06 (03-CONTEXT.md 'Auto-regenerate on blur') and requirement GEN-03 (REQUIREMENTS.md) — patch_segment (main.py:556-594) currently bumps generation_version, sets generation_status='generating', and immediately fires a background regenerate_segment task on any edit. Needs to instead just invalidate (clear audio_path, reset to 'pending') and leave regeneration to the existing manual Generate controls."
   severity: major
   test: 6
