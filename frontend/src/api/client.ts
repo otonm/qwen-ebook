@@ -200,3 +200,19 @@ export async function runBatchGeneration(projectId: string): Promise<{ status: s
   const response = await fetch(`/projects/${projectId}/generate`, { method: "POST" })
   return parseJsonOrThrow(response)
 }
+
+/** GEN-05: cancel a running batch generation. Returns {"status": "cancelled"}
+ * or {"status": "not_running"} if nothing was in flight for this project. */
+export async function cancelBatchGeneration(projectId: string): Promise<{ status: string }> {
+  const response = await fetch(`/projects/${projectId}/generate/cancel`, { method: "POST" })
+  return parseJsonOrThrow(response)
+}
+
+/** CFG-03: on-demand character preview trigger for a character whose voice
+ * was never (re)saved via PATCH /characters/{id}, so preview_audio_path is
+ * still null. Returns {"status": "generating"} — preview generation runs as
+ * a background task; the caller must refetch to pick up the result. */
+export async function triggerCharacterPreview(characterId: string): Promise<{ status: string }> {
+  const response = await fetch(`/characters/${characterId}/preview`, { method: "POST" })
+  return parseJsonOrThrow(response)
+}

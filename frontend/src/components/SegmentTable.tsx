@@ -96,6 +96,10 @@ function GeneratePlayButton({
   const audioRef = useRef<HTMLAudioElement>(null)
   const autoplayRef = useRef(false)
   const hasAudio = Boolean(segment.audio_path)
+  // T-03-29: a row already 'generating' via a batch (or another trigger)
+  // must disable/spin this button too, not just its own local click flag —
+  // otherwise a second click fires a duplicate POST /segments/{id}/generate.
+  const isRowGenerating = isGenerating || segment.generation_status === "generating"
 
   useEffect(() => {
     if (autoplayRef.current && hasAudio && audioRef.current) {
@@ -137,11 +141,11 @@ function GeneratePlayButton({
         type="button"
         size="icon-sm"
         variant={isPlaying ? "default" : "outline"}
-        disabled={isGenerating}
+        disabled={isRowGenerating}
         onClick={() => void handleClick()}
         aria-label={label}
       >
-        {isGenerating ? (
+        {isRowGenerating ? (
           <Loader2 className="animate-spin" />
         ) : hasAudio ? (
           isPlaying ? (
