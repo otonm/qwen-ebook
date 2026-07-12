@@ -275,3 +275,148 @@ def test_bulk_reassign_rejects_cross_project():
 
     segment = _get_segment(seed["segment_id"])
     assert segment.character_id == character_id_before
+
+
+# --- POST /projects/{id}/generate — resumable batch (GEN-05) -------------
+
+
+def _seed_project_with_segments(texts: list[str]) -> tuple[str, list[str]]:
+    """Create a Project + one narrator Character + one Segment per entry in
+    `texts`, ordered 0..N-1. Returns (project_id, [segment_id, ...])."""
+    project_id = uuid.uuid4().hex
+    character_id = uuid.uuid4().hex
+    segment_ids = [uuid.uuid4().hex for _ in texts]
+
+    with Session(engine) as session:
+        session.add(
+            Project(
+                id=project_id,
+                filename="batch.txt",
+                source_text="\n".join(texts),
+                status="ready",
+            )
+        )
+        session.add(
+            Character(
+                id=character_id,
+                project_id=project_id,
+                name="Narrator",
+                description="the narrator",
+                is_narrator=True,
+                voice_instructions="",
+            )
+        )
+        for order, (segment_id, text) in enumerate(zip(segment_ids, texts, strict=True)):
+            session.add(
+                Segment(
+                    id=segment_id,
+                    project_id=project_id,
+                    order=order,
+                    character_id=character_id,
+                    text=text,
+                    voice_instructions="calm",
+                )
+            )
+        session.commit()
+
+    return project_id, segment_ids
+
+
+def _wait_for_terminal(segment_ids: list[str], timeout: float = 5.0) -> None:
+    """Poll until every segment in `segment_ids` reaches a terminal
+    generation_status ("complete" or "error"), or `timeout` elapses."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        statuses = [_get_segment(sid).generation_status for sid in segment_ids]
+        if all(status in ("complete", "error") for status in statuses):
+            return
+        time.sleep(0.05)
+
+
+def test_batch_generates_all_pending():
+    project_id, segment_ids = _seed_project_with_segments(["One.", "Two.", "Three."])
+
+    response = client.post(f"/projects/{project_id}/generate")
+    assert response.status_code == 202
+
+    _wait_for_terminal(segment_ids)
+
+    for segment_id in segment_ids:
+        segment = _get_segment(segment_id)
+        assert segment.generation_status == "complete"
+        assert segment.audio_path is not None
+        assert Path(segment.audio_path).is_file()
+
+
+def test_batch_skips_complete_rows():
+    project_id, segment_ids = _seed_project_with_segments(["One.", "Two."])
+
+    # Pre-generate the first segment via the per-row endpoint so it has a
+    # real, cache-valid audio file on disk before the batch runs.
+    assert client.post(f"/segments/{segment_ids[0]}/generate").status_code == 200
+    before = _get_segment(segment_ids[0])
+    mtime_before = Path(before.audio_path).stat().st_mtime_ns
+
+    response = client.post(f"/projects/{project_id}/generate")
+    assert response.status_code == 202
+
+    _wait_for_terminal(segment_ids)
+
+    after = _get_segment(segment_ids[0])
+    assert after.audio_path == before.audio_path
+    assert Path(after.audio_path).stat().st_mtime_ns == mtime_before
+
+    second = _get_segment(segment_ids[1])
+    assert second.generation_status == "complete"
+    assert second.audio_path is not None
+
+
+def test_batch_resets_stale_generating():
+    project_id, segment_ids = _seed_project_with_segments(["One."])
+
+    # Simulate a crash mid-synthesis: the row is stuck "generating" with no
+    # audio ever written.
+    with Session(engine) as session:
+        segment = session.get(Segment, segment_ids[0])
+        segment.generation_status = "generating"
+        session.add(segment)
+        session.commit()
+
+    response = client.post(f"/projects/{project_id}/generate")
+    assert response.status_code == 202
+
+    _wait_for_terminal(segment_ids)
+
+    segment = _get_segment(segment_ids[0])
+    assert segment.generation_status == "complete"
+    assert segment.audio_path is not None
+    assert Path(segment.audio_path).is_file()
+
+
+def test_batch_continues_past_error(monkeypatch):
+    from app.tts_client import synthesize as real_synthesize
+
+    def _flaky_synthesize(text: str, speaker: str) -> bytes:
+        if "boom" in text:
+            raise RuntimeError("synthetic synthesis failure")
+        return real_synthesize(text, speaker)
+
+    monkeypatch.setattr("app.main.synthesize", _flaky_synthesize)
+
+    project_id, segment_ids = _seed_project_with_segments(
+        ["Segment one.", "boom segment.", "Segment three."]
+    )
+
+    response = client.post(f"/projects/{project_id}/generate")
+    assert response.status_code == 202
+
+    _wait_for_terminal(segment_ids)
+
+    failing = _get_segment(segment_ids[1])
+    assert failing.generation_status == "error"
+    assert failing.generation_error is not None
+
+    for segment_id in (segment_ids[0], segment_ids[2]):
+        segment = _get_segment(segment_id)
+        assert segment.generation_status == "complete"
+        assert segment.audio_path is not None
