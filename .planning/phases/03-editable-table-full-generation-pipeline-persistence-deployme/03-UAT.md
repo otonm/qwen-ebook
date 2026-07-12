@@ -1,5 +1,5 @@
 ---
-status: complete
+status: diagnosed
 phase: 03-editable-table-full-generation-pipeline-persistence-deployme
 source: [03-01-SUMMARY.md, 03-02-SUMMARY.md, 03-03-SUMMARY.md, 03-04-SUMMARY.md, 03-05-SUMMARY.md]
 started: 2026-07-12T11:04:11Z
@@ -136,8 +136,15 @@ blocked: 0
   reason: "User reported: restarting qwen-ebook-backend.service + qwen-ebook-tts.service via systemd tore down qwen-ebook-pod.service (ExitPolicy=stop) and did not self-heal — 'Dependency failed', app stayed fully down until units were manually started in the correct order (pod, then tts, then backend). Additionally, qwen-ebook-backend runs with Podman AutoRemove=true and no volume/bind mount for its SQLite DB/uploads/output — any future restart that hits real project data will silently destroy it (no persistent state, unlike the TTS unit's HF-cache volume)."
   severity: blocker
   test: 1
-  artifacts: []
-  missing: []
+  root_cause: "qwen-ebook-pod.service has ExitPolicy=stop, so it tears itself down once both member containers stop; systemd's restart job for backend+tts doesn't reliably re-trigger a start of the BindsTo-linked pod unit in the same transaction, producing 'Dependency failed'. Separately, qwen-ebook-backend.container has AutoRemove=true and declares no Volume/bind mount (unlike qwen-ebook-tts.container's qwen-ebook-tts-hf-cache volume), so its SQLite DB/uploads/output live only in the container's ephemeral overlay writable layer."
+  artifacts:
+    - path: "deploy/qwen-ebook.pod"
+      issue: "no persistent volume declared for the backend's writable state; pod's default exit-policy tears down on last-container-stop"
+    - path: "deploy/qwen-ebook-backend.container"
+      issue: "no Volume= entry for /backend (DB/uploads/output), unlike the tts unit's HF-cache volume; AutoRemove implied by Podman Quadlet default"
+  missing:
+    - "Add a Volume= mount for the backend's persistent state directory (DB/uploads/output) in qwen-ebook-backend.container, matching the tts unit's HF-cache pattern"
+    - "Fix (or document) the pod/container restart ordering so `systemctl restart` of the member containers reliably brings the pod back, or document the correct manual restart sequence (pod, then tts, then backend) in deploy/README.md"
   debug_session: ""
 
 - truth: "Opening the app resumes the user's in-progress project or shows the project list — it never gets permanently stuck."
@@ -145,6 +152,7 @@ blocked: 0
   reason: "User reported: when i open the app, i only get \"Analyzing your book...\" — never reached the segment table. Root cause: stale localStorage qwen-ebook:projectId points at a project that no longer exists server-side (GET /projects returns []); the analysis-stream 404s, but useAnalysisStream.ts's EventSource error handler (line 74-78) treats the resulting no-data error event as a transient network hiccup and silently no-ops, leaving the UI stuck on the Analyzing screen forever with no recovery path."
   severity: blocker
   test: 3
+  root_cause: "The backend's /projects/{id}/analysis-stream returns a bare HTTP 404 (via _require_project_exists) for a project id that doesn't exist, which is not a valid text/event-stream response; the browser's native EventSource surfaces this as a generic connection error event with no `data` payload. useAnalysisStream.ts's error handler unconditionally treats an error event with no `data` as a transient, reconnect-eligible network blip and returns early, so the permanent 404 is silently retried forever instead of surfacing stream.status = 'error'."
   artifacts:
     - path: "frontend/src/hooks/useAnalysisStream.ts"
       issue: "error event with no `data` payload is always treated as a transient reconnect-eligible network blip (line 74-78), even when it's actually a permanent 404 for a project that no longer exists"
@@ -157,6 +165,7 @@ blocked: 0
   reason: "User reported: the preview controls on the character list have no effect. Root cause: preview_audio_path is null for both characters in the live test project (never set) — CharacterPreviewRow's Play button is disabled whenever hasPreview is false (ConfigPanel.tsx:54) with no tooltip/explanation, and preview audio is only ever generated as a side effect of editing a character's voice_instructions in the separate CastWizard (Review Cast) screen, which the Config Panel gives no hint of and no way to trigger from."
   severity: major
   test: 4
+  root_cause: "preview_audio_path is only ever populated as a side effect of PATCHing a character's voice_instructions in the CastWizard (Review Cast) screen — it's never eagerly generated when analysis/casting completes. ConfigPanel's CharacterPreviewRow unconditionally disables its Play button when preview_audio_path is null, with no tooltip or alternate trigger, so a character whose voice was never explicitly re-saved in the wizard has a permanently inert preview control on this screen."
   artifacts:
     - path: "frontend/src/components/ConfigPanel.tsx"
       issue: "CharacterPreviewRow's Play button silently disables with no explanation when preview_audio_path is null, and there is no way to generate a preview from this screen"
@@ -169,6 +178,7 @@ blocked: 0
   reason: "User reported: if i press generate all when a segment is beeing generated, nothing happens (no warning, no change on the ui). Root cause: POST /projects/{id}/generate (generate_project in main.py) has no in-flight guard — it unconditionally spawns a new run_batch_generation task every call. run_batch_generation's own stale-reset step (generation_worker.py:115-124) unconditionally resets any 'generating' row back to 'pending', assuming a crash leftover; it cannot distinguish that from a genuinely in-flight per-row generate_segment call, so a second Generate All click races the already-running work instead of being blocked. The frontend's isRunning guard (ConfigPanel.tsx:94) only reflects the batch SSE stream's status, not any per-row 'generating' segment, so the button isn't even disabled in that case."
   severity: major
   test: 4
+  root_cause: "generate_project (POST /projects/{id}/generate) has no in-flight/lock check and unconditionally spawns a new run_batch_generation asyncio task on every call. run_batch_generation's own startup step unconditionally resets any row currently 'generating' back to 'pending' assuming it's a crash leftover — it has no way to tell that apart from a task that's genuinely still running (from an earlier click or a per-row generate), so a second invocation stomps on the first's in-flight work instead of being rejected."
   artifacts:
     - path: "backend/app/main.py"
       issue: "generate_project has no lock/in-flight check before spawning run_batch_generation (around line 774)"
@@ -186,6 +196,7 @@ blocked: 0
   reason: "User reported (continuation of test 4): the play button next to the generating... message is enabled and clicking it starts a spinner. Root cause: SegmentTable.tsx's GeneratePlayButton tracks its own local isGenerating state (line 95), set true only for the duration of ITS OWN await generateSegment() call — it never reads segment.generation_status at all. So when a row is already 'generating' via a batch run (or any other source), hasAudio is still false (audio_path not set yet), the button is NOT disabled, and clicking it calls POST /segments/{id}/generate a second time for the same segment that's already being synthesized — a second concurrent write racing the first."
   severity: major
   test: 4
+  root_cause: "GeneratePlayButton's isGenerating is component-local React state set true only for the duration of its own await generateSegment() call — it is never derived from the segment's actual server-side generation_status. So a row that's 'generating' for any other reason (a batch run, another trigger) still shows an enabled button with hasAudio=false, and a click fires a second, independent POST /segments/{id}/generate for the same row."
   artifacts:
     - path: "frontend/src/components/SegmentTable.tsx"
       issue: "GeneratePlayButton's disabled={isGenerating} (line 140) only reflects this button instance's own local click-in-flight state, never segment.generation_status, so it doesn't disable for a row that's generating via a batch run or any other trigger"
@@ -198,6 +209,7 @@ blocked: 0
   reason: "User requested (continuation of test 4): allow canceling/stopping the generation at any point which completely stops any processes/threads. This is a new capability — no cancel/stop endpoint or UI control exists anywhere in the current implementation (checked main.py and generation_worker.py: generate_segment and run_batch_generation both run to completion once started, with no cancellation token or abort path)."
   severity: minor
   test: 4
+  root_cause: "Not a defect — a missing feature. Neither generate_segment nor run_batch_generation accept or check any cancellation signal; once awaited/scheduled, both run to completion with no abort path exposed to the API or UI."
   artifacts: []
   missing:
     - "A cancel endpoint (e.g. DELETE/POST /projects/{id}/generate/cancel and/or /segments/{id}/generate/cancel) that actually cancels the underlying asyncio task (not just marks a DB flag while the task keeps running), plus a Stop/Cancel control in the UI wherever a generating spinner is shown"
@@ -208,6 +220,7 @@ blocked: 0
   reason: "User requested (confirmed as an intentional requirement change, not a one-off annoyance): when i edit the segment text and then leave the field, a new generation is started. expected behavior: remove previous segment audio if present and reset the state. the user has to trigger the generation manually. This reverses documented decision D-06 (03-CONTEXT.md 'Auto-regenerate on blur') and requirement GEN-03 (REQUIREMENTS.md) — patch_segment (main.py:556-594) currently bumps generation_version, sets generation_status='generating', and immediately fires a background regenerate_segment task on any edit. Needs to instead just invalidate (clear audio_path, reset to 'pending') and leave regeneration to the existing manual Generate controls."
   severity: major
   test: 6
+  root_cause: "Not a defect — the current code correctly implements documented decision D-06/requirement GEN-03 (auto-regenerate-on-blur). The user has now reversed that decision during UAT; patch_segment's any_changed branch needs to stop auto-firing regenerate_segment and instead only invalidate the row (clear audio_path, reset to 'pending')."
   artifacts:
     - path: "backend/app/main.py"
       issue: "patch_segment (line 578-592) auto-fires asyncio.create_task(regenerate_segment(...)) on any_changed instead of just invalidating the row"
