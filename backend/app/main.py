@@ -205,6 +205,25 @@ def _serialize_project(
     }
 
 
+@app.get("/projects")
+async def list_projects() -> list[dict]:
+    """PERS-02: thin project list for the landing screen — id/filename/
+    status/created_at only, no character/segment payload. Reads the
+    existing Project table (created_at was already added in plan 03-01),
+    no schema change. Newest first."""
+    with Session(engine) as session:
+        projects = session.exec(select(Project).order_by(Project.created_at.desc())).all()
+        return [
+            {
+                "id": project.id,
+                "filename": project.filename,
+                "status": project.status,
+                "created_at": project.created_at,
+            }
+            for project in projects
+        ]
+
+
 @app.get("/projects/{project_id}")
 async def get_project(project_id: str):
     with Session(engine) as session:

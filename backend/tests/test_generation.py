@@ -420,3 +420,52 @@ def test_batch_continues_past_error(monkeypatch):
         segment = _get_segment(segment_id)
         assert segment.generation_status == "complete"
         assert segment.audio_path is not None
+
+
+# --- GET /projects — project list (PERS-02) -------------------------------
+
+
+def test_list_projects_returns_saved_projects():
+    seed1 = _seed_segment()
+    time.sleep(0.01)  # ensure a distinct created_at ordering vs seed2
+    seed2 = _seed_segment()
+
+    response = client.get("/projects")
+    assert response.status_code == 200
+    body = response.json()
+
+    by_id = {p["id"]: p for p in body}
+    assert seed1["project_id"] in by_id
+    assert seed2["project_id"] in by_id
+    for project in body:
+        assert set(project.keys()) == {"id", "filename", "status", "created_at"}
+
+    # Newest first.
+    index1 = next(i for i, p in enumerate(body) if p["id"] == seed1["project_id"])
+    index2 = next(i for i, p in enumerate(body) if p["id"] == seed2["project_id"])
+    assert index2 < index1
+
+
+def test_list_projects_empty(monkeypatch):
+    """The shared projects.db already has rows from other tests in this
+    module, so a genuinely empty list can only be exercised against an
+    isolated engine — swap app.main.engine for a throwaway in-memory one
+    for the duration of this test (same monkeypatch-a-main-module-global
+    pattern as test_patch_bumps_generation_version's synthesize swap)."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import StaticPool
+    from sqlmodel import SQLModel
+
+    # StaticPool: a bare "sqlite://" in-memory DB is otherwise per-connection
+    # (SQLAlchemy opens a fresh connection per Session, each getting its own
+    # empty memory DB) — StaticPool pins the whole engine to one connection
+    # so the table created below is actually visible to the request below.
+    empty_engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    SQLModel.metadata.create_all(empty_engine)
+    monkeypatch.setattr("app.main.engine", empty_engine)
+
+    response = client.get("/projects")
+    assert response.status_code == 200
+    assert response.json() == []
