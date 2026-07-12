@@ -19,6 +19,11 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_UPLOAD_DIR = str(_REPO_ROOT / "backend" / "uploads")
 _DEFAULT_OUTPUT_DIR = str(_REPO_ROOT / "backend" / "output")
+# Built React static assets (Containerfile.backend's frontend-build stage
+# copies frontend/dist here). Only exists in the built image; local dev
+# uses `npm run dev`'s own server instead, so a missing directory here is
+# expected and handled by StaticFiles(check_dir=False) in main.py.
+_DEFAULT_STATIC_DIR = str(_REPO_ROOT / "backend" / "static")
 
 
 def _env_int(name: str, default: int) -> int:
@@ -50,6 +55,7 @@ class Settings:
     UPLOAD_DIR: str
     OUTPUT_DIR: str
     PREVIEW_DIR: str
+    STATIC_DIR: str
     LLM_BACKEND: str
     OPENROUTER_API_KEY: str
     OPENROUTER_MODEL: str
@@ -77,6 +83,7 @@ def load_settings() -> Settings:
         UPLOAD_DIR=os.environ.get("UPLOAD_DIR", _DEFAULT_UPLOAD_DIR),
         OUTPUT_DIR=output_dir,
         PREVIEW_DIR=os.environ.get("PREVIEW_DIR", f"{output_dir}/previews"),
+        STATIC_DIR=os.environ.get("STATIC_DIR", _DEFAULT_STATIC_DIR),
         LLM_BACKEND=os.environ.get("LLM_BACKEND", "mock"),
         OPENROUTER_API_KEY=os.environ.get("OPENROUTER_API_KEY", ""),
         OPENROUTER_MODEL=os.environ.get("OPENROUTER_MODEL", "x-ai/grok-4.3"),

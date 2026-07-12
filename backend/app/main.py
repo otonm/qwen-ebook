@@ -31,6 +31,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import Response
 from fastapi.sse import EventSourceResponse, ServerSentEvent
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlmodel import Session, select
 from starlette.concurrency import run_in_threadpool
@@ -795,3 +796,16 @@ async def generation_stream(
 
     async for event_type, payload in generation_progress_events(project_id):
         yield ServerSentEvent(data=payload, event=event_type)
+
+
+# Serve the built React app (DEPL-02: this backend is the single process
+# the whole app runs as). Mounted LAST so every API route above is matched
+# first; only paths no @app route claims (the SPA's "/", its JS/CSS
+# bundles) fall through to here. check_dir=False: local dev has no built
+# frontend/dist (uses `npm run dev` instead) — without it, StaticFiles
+# raises at import time and breaks every test that imports app.main.
+app.mount(
+    "/",
+    StaticFiles(directory=settings.STATIC_DIR, html=True, check_dir=False),
+    name="static",
+)

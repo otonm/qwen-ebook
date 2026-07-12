@@ -1,3 +1,16 @@
+# Frontend build stage — the backend is the single process that serves the
+# whole app (CLAUDE.md stack: "One process owns upload, LLM calls, EPUB
+# parse, TTS queue, ffmpeg join, SQLite"), so the built React static assets
+# ship inside this same image rather than a separate frontend
+# container/nginx. Build context is the repo root (see deploy/run-local.sh)
+# so ../frontend is reachable from here.
+FROM node:20-slim AS frontend-build
+WORKDIR /frontend
+COPY frontend/package.json frontend/package-lock.json /frontend/
+RUN npm ci
+COPY frontend/ /frontend/
+RUN npm run build
+
 # CPU-only backend image (DEPL-01 isolation boundary).
 #
 # This image never imports any GPU/ML runtime — all GPU work happens
@@ -25,13 +38,18 @@ WORKDIR /app
 
 # Install dependencies first (better layer caching) — no dev deps, no
 # project code yet, so an app/ code change doesn't invalidate the dep layer.
-COPY pyproject.toml uv.lock /app/
+COPY backend/pyproject.toml backend/uv.lock /app/
 RUN uv sync --frozen --no-dev --no-install-project
 
 # Now copy the actual backend package and finish the sync so the project
 # itself is installed too.
-COPY app/ /app/app/
+COPY backend/app/ /app/app/
 RUN uv sync --frozen --no-dev
+
+# Built React static assets — served by app.main's StaticFiles mount.
+# Lives under /backend (like uploads/output), not /app, matching
+# config.py's STATIC_DIR default (_REPO_ROOT/backend/static).
+COPY --from=frontend-build /frontend/dist /backend/static
 
 ENV PYTHONUNBUFFERED=1
 ENV PATH="/app/.venv/bin:${PATH}"

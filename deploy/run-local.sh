@@ -45,7 +45,11 @@ cleanup_existing_pod() {
 }
 
 log "Building backend image (${BACKEND_IMAGE})..."
-${PODMAN} build -f "${BACKEND_DIR}/Containerfile.backend" -t "${BACKEND_IMAGE}" "${BACKEND_DIR}"
+# Context is the repo root (not backend/) so the Containerfile's frontend
+# build stage can COPY frontend/ — the backend now serves the built React
+# app itself (StaticFiles mount in app.main), no separate frontend
+# container/nginx.
+${PODMAN} build -f "${BACKEND_DIR}/Containerfile.backend" -t "${BACKEND_IMAGE}" "${REPO_ROOT}"
 
 log "Building TTS image (${TTS_IMAGE})..."
 ${PODMAN} build -f "${BACKEND_DIR}/Containerfile.tts" -t "${TTS_IMAGE}" "${BACKEND_DIR}"
