@@ -152,3 +152,92 @@ investigation log. Re-verified directly on the production RX 9070 XT VM:
 
 Tracked follow-up gate, not part of this phase's success bar (01-SKELETON.md
 "Follow-up Gate") — all four items now closed.
+
+## Quadlet (systemd-managed) deployment
+
+`run-local.sh` above is the manual dev/re-bring-up path — nothing persists a
+teardown or a VM reboot. For the permanent production deployment (DEPL-02),
+the same two-container pod is expressed as three Podman Quadlet unit files
+(`deploy/qwen-ebook.pod`, `deploy/qwen-ebook-tts.container`,
+`deploy/qwen-ebook-backend.container`), managed by root's systemd. This is
+the form that survives a reboot and restarts on failure.
+
+**Reconfirm the Podman version on the VM first.** Quadlet's exact key set has
+shifted across Podman 4.4–5.x releases; run `podman --version` over
+Tailscale SSH and cross-check against the unit files' header comments before
+assuming this syntax is correct on this specific host.
+
+### Install the units
+
+Over Tailscale SSH, as root (or via `sudo`):
+
+```bash
+sudo cp deploy/qwen-ebook.pod deploy/qwen-ebook-tts.container deploy/qwen-ebook-backend.container \
+  /etc/containers/systemd/
+sudo chown root:root /etc/containers/systemd/qwen-ebook*
+sudo chmod 0644 /etc/containers/systemd/qwen-ebook*
+sudo systemctl daemon-reload
+```
+
+Root-owned `0644` permissions match standard systemd unit-file convention —
+no secret material lives in these units (the only env vars are the
+non-sensitive `TTS_BACKEND`/`TTS_SERVICE_URL`).
+
+### Bring the pod up
+
+Starting the backend unit pulls in the pod and the TTS unit automatically,
+via each unit's `Requires=`:
+
+```bash
+sudo systemctl start qwen-ebook-backend.service
+```
+
+### One-time tailnet exposure
+
+The pod publishes the backend port to `127.0.0.1:8000` only — never
+`0.0.0.0` — so `tailscale serve` is the sole path from the tailnet in
+(DEPL-02, no public exposure, no added auth layer). Run this once; it
+persists across reboots independently of the Quadlet units themselves:
+
+```bash
+sudo tailscale serve --bg 8000
+```
+
+**This is Open Question 2 from the phase research** — whether `tailscale
+serve` on the host actually reaches a pod port published to loopback via
+Podman's port-publish mechanism was not assumed; it must be confirmed live
+on the VM at this step, not taken on faith.
+
+### Post-deploy verification (do all four before considering DEPL-02 done)
+
+1. **GPU devices are on the TTS container only** (Pitfall 4 — the flag set
+   most often dropped in a hand-translated Quadlet unit):
+   ```bash
+   sudo systemctl status qwen-ebook-tts.service
+   sudo podman exec qwen-ebook-tts ls /dev/kfd /dev/dri      # -> present
+   sudo podman exec qwen-ebook-backend ls /dev/kfd /dev/dri  # -> "No such file or directory"
+   ```
+2. **Backend answers on host loopback:**
+   ```bash
+   curl 127.0.0.1:8000/healthz
+   ```
+   Expect a `200` response.
+3. **Reachable from a second tailnet device:** from another machine on the
+   same tailnet, open the app's Tailscale Serve URL (`https://tts.<tailnet
+   name>.ts.net`, or run `tailscale serve status` on the VM to confirm the
+   exact URL) and confirm the project list loads, then run a small
+   end-to-end generate.
+4. **Unreachable off-tailnet:** confirm no device outside the tailnet can
+   reach the app — there is no public port published (`PublishPort=` in the
+   `.pod` unit binds loopback only), so this should fail by construction,
+   but is worth a live check rather than an assumption.
+
+### Tear down / restart
+
+```bash
+sudo systemctl stop qwen-ebook-backend.service
+sudo systemctl restart qwen-ebook-backend.service
+```
+
+Stopping/restarting the backend unit tears down/brings back the whole pod
+via the `Requires=`/`After=` ordering in the unit files.
