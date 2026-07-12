@@ -451,6 +451,51 @@ def test_batch_continues_past_error(monkeypatch):
         assert segment.audio_path is not None
 
 
+# --- Per-project in-flight generation guard (T-03-25/T-03-26) ------------
+
+
+def test_second_generate_all_while_running_is_rejected(monkeypatch):
+    call_count = {"n": 0}
+
+    def _slow_synthesize(text: str, speaker: str) -> bytes:
+        call_count["n"] += 1
+        time.sleep(0.2)
+        return b"SLOW-BATCH-BYTES"
+
+    monkeypatch.setattr("app.main.synthesize", _slow_synthesize)
+
+    project_id, segment_ids = _seed_project_with_segments(["One.", "Two."])
+
+    first = client.post(f"/projects/{project_id}/generate")
+    assert first.status_code == 202
+    assert first.json()["status"] == "started"
+
+    time.sleep(0.05)  # let the batch actually start before firing a second
+
+    second = client.post(f"/projects/{project_id}/generate")
+    assert second.status_code == 202
+    assert second.json()["status"] == "already_running"
+
+    _wait_for_terminal(segment_ids, timeout=5.0)
+
+    # Only one batch pass ran — exactly one synth call per segment, not two.
+    assert call_count["n"] == len(segment_ids)
+
+
+def test_per_row_generate_rejects_duplicate_while_generating():
+    seed = _seed_segment()
+    segment_id = seed["segment_id"]
+
+    with Session(engine) as session:
+        segment = session.get(Segment, segment_id)
+        segment.generation_status = "generating"
+        session.add(segment)
+        session.commit()
+
+    response = client.post(f"/segments/{segment_id}/generate")
+    assert response.status_code == 409
+
+
 # --- GET /projects — project list (PERS-02) -------------------------------
 
 

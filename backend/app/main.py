@@ -42,8 +42,10 @@ from app.config import settings
 from app.db import engine, init_db
 from app.epub_parser import EpubParseError, extract_text
 from app.generation_worker import (
+    _running_generations,
     generation_progress_events,
     has_pending_generation_queue,
+    is_generation_running,
     run_batch_generation,
 )
 from app.models import Character, Project, Segment
@@ -699,11 +701,19 @@ async def regenerate_segment(segment_id: str, version: int) -> None:
 async def generate_segment(segment_id: str) -> dict:
     """TBL-04 on-demand per-row generate. Awaits the regenerate helper
     synchronously (single-row scope, no need for a fire-and-forget task
-    here) and returns the segment's resulting status."""
+    here) and returns the segment's resulting status.
+
+    T-03-26: a row already 'generating' (via an earlier per-row click or a
+    batch run currently on this row) is rejected with 409 rather than
+    starting a second concurrent regenerate_segment for the same row —
+    that second call would race the first and get stomped by the worker's
+    stale-'generating' reset."""
     with Session(engine) as session:
         segment = session.get(Segment, segment_id)
         if segment is None:
             raise HTTPException(status_code=404, detail="Segment not found")
+        if segment.generation_status == "generating":
+            raise HTTPException(status_code=409, detail="Segment is already generating")
         segment.generation_status = "generating"
         session.add(segment)
         session.commit()
@@ -776,14 +786,31 @@ async def generate_project(project_id: str) -> dict:
     is pushed over generation_stream. Fires even if a previous run already
     completed; run_batch_generation's own stale-reset + per-segment cache
     check make a re-invocation on an already-complete project a fast no-op
-    join, which is exactly what "Resume Generation" needs."""
+    join, which is exactly what "Resume Generation" needs.
+
+    T-03-25/T-03-26: a second call while a run is already live for this
+    project is rejected without spawning another task — two concurrent
+    run_batch_generation passes would race each other's row writes, and
+    the worker's own crash-leftover stale-reset would misfire against
+    genuinely in-flight rows. Still 202 (accepted, just not started) —
+    the frontend only needs the status string to tell the two cases apart."""
     with Session(engine) as session:
         if session.get(Project, project_id) is None:
             raise HTTPException(status_code=404, detail="Project not found")
 
+    if is_generation_running(project_id):
+        return {"status": "already_running"}
+
     task = asyncio.create_task(run_batch_generation(project_id))
+    _running_generations[project_id] = task
     _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+
+    def _cleanup(completed_task: asyncio.Task, project_id: str = project_id) -> None:
+        _background_tasks.discard(completed_task)
+        if _running_generations.get(project_id) is completed_task:
+            _running_generations.pop(project_id, None)
+
+    task.add_done_callback(_cleanup)
 
     return {"status": "started"}
 

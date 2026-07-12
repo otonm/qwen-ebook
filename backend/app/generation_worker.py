@@ -36,9 +36,28 @@ logger = logging.getLogger(__name__)
 # never share (or collide on) the same queue.
 _generation_progress_queues: dict[str, asyncio.Queue] = {}
 
+# T-03-25/T-03-26: keyed by project_id, tracks the live run_batch_generation
+# task (if any) so a second Generate All (or the worker's own crash-leftover
+# stale-reset) can tell a genuinely in-flight run apart from an orphaned
+# "generating" row. main.py registers into this dict directly and removes
+# the entry via a done-callback, same registry discipline as
+# _generation_progress_queues.
+_running_generations: dict[str, asyncio.Task] = {}
+
 
 def _get_generation_queue(project_id: str) -> asyncio.Queue:
     return _generation_progress_queues.setdefault(project_id, asyncio.Queue())
+
+
+def is_generation_running(project_id: str) -> bool:
+    """True if `project_id` has a live (not-yet-done) run_batch_generation
+    task registered."""
+    task = _running_generations.get(project_id)
+    return task is not None and not task.done()
+
+
+def get_generation_task(project_id: str) -> asyncio.Task | None:
+    return _running_generations.get(project_id)
 
 
 def has_pending_generation_queue(project_id: str) -> bool:
