@@ -1,0 +1,34 @@
+# Quadlet container unit — declarative systemd translation of run-local.sh's
+# GPU-scoped `podman run --pod qwen-ebook --user 0:0 --device /dev/kfd
+# --device /dev/dri ...` block (DEPL-02).
+#
+# Reconfirm the production VM's exact `podman --version` over Tailscale SSH
+# before relying on this syntax — Quadlet key set has shifted 4.4-5.x.
+#
+# GPU_SECURITY_OPT / HSA_OVERRIDE_GFX_VERSION dev-host workarounds
+# (backend/GPU-ENABLEMENT.md) are intentionally omitted here: D-09
+# re-verification found the production gfx1201 VM needs neither.
+
+[Unit]
+Description=Qwen Ebook TTS (GPU-scoped)
+After=qwen-ebook-pod.service
+Requires=qwen-ebook-pod.service
+
+[Container]
+ContainerName=qwen-ebook-tts
+Image=localhost/qwen-ebook-tts:dev
+Pod=qwen-ebook.pod
+# Root inside the container is what actually grants /dev/kfd access under
+# rootful Podman (D-09) — do not drop these two lines.
+User=0
+Group=0
+# Both device entries are required (Pitfall 4 — /dev/dri alone "looks"
+# sufficient during a quick manual test but is not); verify post-deploy with
+# `sudo podman exec qwen-ebook-tts ls /dev/kfd /dev/dri`.
+AddDevice=/dev/kfd
+AddDevice=/dev/dri
+# Persists the multi-GB Hugging Face model download across restarts.
+Volume=qwen-ebook-tts-hf-cache:/home/ubuntu/.cache/huggingface
+
+[Install]
+WantedBy=multi-user.target

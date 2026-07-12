@@ -1,0 +1,23 @@
+# Quadlet pod unit — declarative systemd translation of run-local.sh's
+# `podman pod create --name qwen-ebook -p 8000:8000` (DEPL-02).
+#
+# Podman Quadlet's key set has shifted across 4.4-5.x releases — reconfirm
+# the production VM's exact `podman --version` over Tailscale SSH before
+# relying on this syntax if bring-up fails with an "unknown key" error.
+#
+# Installed rootful under /etc/containers/systemd/ (root's systemd), matching
+# run-local.sh's `sudo podman` invocation and the D-09-verified GPU access
+# path (rootless Podman cannot reach /dev/kfd on this host/Podman/crun combo).
+
+[Unit]
+Description=Qwen Ebook Narrator pod
+
+[Pod]
+PodName=qwen-ebook
+# Backend published to loopback ONLY — tailscale serve is the sole tailnet
+# path in (DEPL-02, T-03-13). Never change this to 0.0.0.0:8000:8000.
+PublishPort=127.0.0.1:8000:8000
+# TTS port 8001 stays pod-internal — no PublishPort entry for it (T-03-01).
+
+[Install]
+WantedBy=multi-user.target
