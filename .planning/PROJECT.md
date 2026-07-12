@@ -25,10 +25,11 @@ Given a long text, produce a natural-sounding, multi-character narrated audio fi
 - [x] Editing a row's text, voice instructions, or narrator invalidates its stale audio (clears it, marks pending) but does NOT auto-regenerate — regeneration is user-triggered only via the per-row or Generate All controls — Validated in Phase 3 (GEN-03). **Reversed from the original "auto-regenerate on edit" wording during Phase 3 UAT** (see 03-CONTEXT.md D-06) after the user found auto-fire-on-blur surprising; the invariant now holds project-wide including bulk-reassign/merge/voice-preset-edit paths (closed as code-review finding CR-01, commit `cdcdbf4`).
 - [x] Projects (source text, character cast, segment table, generated audio) are saved and can be reopened later — single user, no accounts — Validated in Phase 3 (PERS-01/02): auto-save on every edit, a Project List landing screen, resumable batch generation, and a stuck-analyzing-screen recovery path for a stale/deleted project id
 - [x] App is deployed via Podman on a VM with an AMD GPU (RX 9070 XT, 16GB VRAM), served over the user's Tailscale network (no public exposure, no auth needed beyond Tailscale) — Validated in Phase 3 (DEPL-02): Podman Quadlet systemd units, `tailscale serve` fronting a loopback-only backend, a persistent `/data` volume, and restart self-heal (`--exit-policy=continue`) all confirmed live on the production RX 9070 XT VM
+- [x] User can upload an EPUB (.epub) source file, with chapter/reading-order text extracted and markup/footnotes stripped — Validated in Phase 2 (ING-02, plan 02-02): `epub_parser.py` (ebooklib + BeautifulSoup/lxml), spine-order extraction, footnote stripping, fail-fast on unrecoverable chapters, wired into `POST /projects`
 
 ### Active
 
-- [ ] User can upload a source text file (.epub) — .txt validated in Phase 1; .epub extraction (ING-02) was never implemented in Phase 1, 2, or 3 and remains open. Not blocking — the v1.0 milestone's phases (1-3) are otherwise complete and shipped without it; flag for a future milestone or a small follow-up phase if still wanted.
+(None — all 27 v1 requirements shipped and validated as of the v1.0 milestone.)
 
 ### Out of Scope
 
@@ -45,6 +46,12 @@ Given a long text, produce a natural-sounding, multi-character narrated audio fi
 - Qwen TTS runs self-hosted on the AMD GPU host (ROCm), not via a cloud TTS API.
 - Text analysis/character detection uses an LLM accessed via OpenRouter (cloud) — user already has an OpenRouter API key.
 - Network exposure is via Tailscale (private mesh network), so no public-facing auth layer is needed.
+
+**v1.0 shipped state (2026-07-12):** ~5,500 LOC (Python backend + TypeScript/React frontend) across 163 files, 3 phases / 17 plans / 39 tasks over 4 days. Live and verified end-to-end on the production RX 9070 XT VM at `https://tts.pigeon-bearded.ts.net` (Podman Quadlet units, restart-resilient, persistent `/data` volume). All 27 v1 requirements shipped and validated — no open v1 gaps.
+
+**Known technical debt / open threads for v2 planning:**
+- CAST-02 (cross-chunk cast reconciliation) is proven by a behavioral unit test and a real-Grok single-chunk smoke test, but never exercised against a real long book spanning multiple chunks through a real LLM call — worth a real-world validation pass if long-book casting quality is ever in question.
+- Deferred v2 candidates (tracked in STATE.md Deferred Items pending the next milestone's requirements pass): LLM cost/usage visibility (ENH-01), "last good" audio fallback on a bad regenerate (ENH-02), audiobook-specific output/M4B+chapters (OUT-01), voice cloning from personal recordings (VOICE-01).
 
 ## Constraints
 
@@ -63,6 +70,7 @@ Given a long text, produce a natural-sounding, multi-character narrated audio fi
 | Voice assignment mixes presets + context-derived instructions | Qwen TTS has limited presets; LLM-inferred character traits fill the gap for one-off characters | Phase 2: preset + free-text `instruct` steering both wired through the cast wizard and Config Panel, with on-demand preview generation added during Phase 3 UAT |
 | Self-hosted Qwen TTS on AMD GPU (ROCm) rather than cloud TTS API | Avoids per-request cost, keeps generation local to the Tailscale network | Phase 1: code/model/server proven correct against the real `qwen-tts` API; dev GPU (Radeon 780M/gfx1103, unsupported) reproducibly crashes on actual synthesis, documented via a fallback ladder. Production RX 9070 XT VM re-verification (D-09) closed out 2026-07-10 (commit `1ce34aa`): real non-silent audio confirmed end-to-end, rootful Podman is the required invocation shape (rootless `--group-add keep-groups` does not grant `/dev/kfd` access on this Podman/crun combo, independent of GPU architecture) |
 | Podman (not Docker) for deployment | User's existing infra preference | Phase 1: two-container Podman pod built and proven — GPU devices correctly isolated to the TTS container only, backend has none, network/error-boundary wiring confirmed working |
+| Serve the built frontend from the backend container itself (multi-stage Containerfile + `StaticFiles` mount), not a separate static host | Every real-hardware check up to Phase 3 sign-off curl'd API routes directly, so nobody noticed the browser root URL 404'd until the user opened it | Post-sign-off fix (commit `63b705b`): one container serves both `/api/*` and `index.html`/JS/CSS, registered after all API routes so it only catches what no route claims; verified live through `tailscale serve` |
 
 ## Evolution
 
@@ -82,4 +90,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-12 after Phase 3 completion (v1.0 milestone)*
+*Last updated: 2026-07-12 after v1.0 milestone completion*
