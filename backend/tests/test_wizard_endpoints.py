@@ -256,3 +256,54 @@ def test_rapid_reassignment_race_last_wins(monkeypatch):
     preview_response = client.get(f"/characters/{character_id}/preview.wav")
     assert preview_response.status_code == 200
     assert preview_response.content == b"FAST-PREVIEW-BYTES"
+
+
+# --- POST /characters/undo-merge (WR-01) --------------------------------
+
+
+def test_undo_merge_rejects_segment_from_other_project():
+    """WR-01: the undo snapshot is entirely client-supplied — a segment_id
+    that doesn't belong to the restored character's project must be
+    rejected, not silently reassigned."""
+    project = _seed_project()
+    source_id, target_id = project["characters"][0]["id"], project["characters"][1]["id"]
+
+    merge_response = client.post(f"/characters/{source_id}/merge", json={"target_id": target_id})
+    assert merge_response.status_code == 200
+    undo = merge_response.json()["undo"]
+
+    other_project = _seed_project()
+    other_segment_id = other_project["segments"][0]["id"]
+
+    response = client.post(
+        "/characters/undo-merge",
+        json={"character": undo["character"], "segment_ids": [other_segment_id]},
+    )
+    assert 400 <= response.status_code < 500
+
+    # Rejected — the fabricated character must not have been created; a
+    # subsequent legitimate undo-merge with this same snapshot still
+    # succeeds (would 409 "already exists" if the invalid call had leaked
+    # a created row).
+    retry = client.post(
+        "/characters/undo-merge",
+        json={"character": undo["character"], "segment_ids": undo["segment_ids"]},
+    )
+    assert retry.status_code == 200
+
+
+def test_undo_merge_restores_character_and_segments():
+    """Baseline happy path for the endpoint WR-01 adds validation to."""
+    project = _seed_project()
+    source_id, target_id = project["characters"][0]["id"], project["characters"][1]["id"]
+
+    merge_response = client.post(f"/characters/{source_id}/merge", json={"target_id": target_id})
+    assert merge_response.status_code == 200
+    undo = merge_response.json()["undo"]
+
+    response = client.post(
+        "/characters/undo-merge",
+        json={"character": undo["character"], "segment_ids": undo["segment_ids"]},
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == source_id

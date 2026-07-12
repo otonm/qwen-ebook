@@ -543,6 +543,24 @@ async def undo_merge_character(body: UndoMergeRequest) -> dict:
     with Session(engine) as session:
         if session.get(Character, character.id) is not None:
             raise HTTPException(status_code=409, detail="Character already exists")
+        # WR-01: this snapshot is fully client-supplied — verify project_id
+        # refers to a real project and every segment_id belongs to it
+        # before mutating anything, mirroring bulk_reassign_segments'/
+        # merge_character's ownership checks. Otherwise a malformed or
+        # crafted request could fabricate a character in an arbitrary
+        # project and reassign arbitrary segments onto it.
+        if session.get(Project, character.project_id) is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        segments = list(
+            session.exec(select(Segment).where(Segment.id.in_(body.segment_ids))).all()
+        )
+        if len(segments) != len(body.segment_ids):
+            raise HTTPException(status_code=404, detail="Segment not found")
+        if any(segment.project_id != character.project_id for segment in segments):
+            raise HTTPException(
+                status_code=400, detail="Segment does not belong to the character's project"
+            )
 
         restored = Character(
             id=character.id,
@@ -556,9 +574,6 @@ async def undo_merge_character(body: UndoMergeRequest) -> dict:
         )
         session.add(restored)
 
-        segments = list(
-            session.exec(select(Segment).where(Segment.id.in_(body.segment_ids))).all()
-        )
         for segment in segments:
             segment.character_id = character.id
             session.add(segment)
@@ -603,6 +618,17 @@ async def patch_segment(segment_id: str, patch: SegmentPatch) -> dict:
             raise HTTPException(status_code=404, detail="Segment not found")
 
         if patch.character_id is not None:
+            # WR-02: mirror bulk_reassign_segments' existence/ownership
+            # check — an unchecked character_id here silently degrades to
+            # character_name: null / a best-guess fallback speaker instead
+            # of erroring (SQLite foreign keys aren't enabled).
+            new_character = session.get(Character, patch.character_id)
+            if new_character is None:
+                raise HTTPException(status_code=404, detail="Character not found")
+            if new_character.project_id != segment.project_id:
+                raise HTTPException(
+                    status_code=400, detail="Character does not belong to the segment's project"
+                )
             segment.character_id = patch.character_id
         if patch.voice_instructions is not None:
             segment.voice_instructions = patch.voice_instructions

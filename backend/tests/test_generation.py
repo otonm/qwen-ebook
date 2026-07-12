@@ -225,6 +225,36 @@ def test_patch_invalidates_without_regenerating(monkeypatch):
     assert not Path(old_audio_path).exists()
 
 
+def test_patch_segment_rejects_unknown_character_id():
+    """WR-02: patch_segment must validate character_id like its sibling
+    bulk_reassign_segments does, not silently assign a dangling id."""
+    seed = _seed_segment()
+    character_id_before = _get_segment(seed["segment_id"]).character_id
+
+    response = client.patch(
+        f"/segments/{seed['segment_id']}", json={"character_id": "does-not-exist"}
+    )
+    assert response.status_code == 404
+
+    segment = _get_segment(seed["segment_id"])
+    assert segment.character_id == character_id_before
+
+
+def test_patch_segment_rejects_cross_project_character_id():
+    seed = _seed_segment()
+    other_seed = _seed_segment()
+    other_target_id = _seed_second_character(other_seed["project_id"])
+    character_id_before = _get_segment(seed["segment_id"]).character_id
+
+    response = client.patch(
+        f"/segments/{seed['segment_id']}", json={"character_id": other_target_id}
+    )
+    assert 400 <= response.status_code < 500
+
+    segment = _get_segment(seed["segment_id"])
+    assert segment.character_id == character_id_before
+
+
 # --- POST /segments/bulk-reassign (TBL-03) --------------------------------
 
 
@@ -450,6 +480,69 @@ def test_batch_continues_past_error(monkeypatch):
         segment = _get_segment(segment_id)
         assert segment.generation_status == "complete"
         assert segment.audio_path is not None
+
+
+def test_batch_regenerates_after_reassign_to_different_voice():
+    """CR-01 regression: bulk-reassigning a 'complete' segment onto a
+    character with a different resolved speaker must NOT be skipped by the
+    batch loop's status check — it must actually resynthesize with the new
+    voice, not silently keep shipping the old character's stale audio."""
+    project_id, segment_ids = _seed_project_with_segments(["One."])
+    segment_id = segment_ids[0]
+
+    assert client.post(f"/segments/{segment_id}/generate").status_code == 200
+    before = _get_segment(segment_id)
+    assert before.generation_status == "complete"
+    old_audio_path = before.audio_path
+
+    other_id = uuid.uuid4().hex
+    with Session(engine) as session:
+        session.add(
+            Character(
+                id=other_id,
+                project_id=project_id,
+                name="Other",
+                description="a different voice",
+                is_narrator=False,
+                voice_instructions="",
+                voice_preset="ryan",
+            )
+        )
+        session.commit()
+
+    reassign = client.post(
+        "/segments/bulk-reassign",
+        json={"segment_ids": [segment_id], "character_id": other_id},
+    )
+    assert reassign.status_code == 200
+
+    # bulk_reassign_segments intentionally leaves generation_status as
+    # "complete" (invalidation now happens implicitly via the batch loop's
+    # own cache-key recompute, not a status flip) — the row still looks
+    # done at this point.
+    mid = _get_segment(segment_id)
+    assert mid.character_id == other_id
+
+    response = client.post(f"/projects/{project_id}/generate")
+    assert response.status_code == 202
+
+    # The row starts (and, on the pre-fix code, would stay) "complete", so
+    # _wait_for_terminal's first poll can race the batch task before it
+    # ever runs and return immediately on the stale value. Poll for the
+    # audio_path to actually change instead of just reaching a terminal
+    # status.
+    deadline = time.time() + 5.0
+    after = _get_segment(segment_id)
+    while time.time() < deadline and after.audio_path == old_audio_path:
+        time.sleep(0.05)
+        after = _get_segment(segment_id)
+
+    assert after.generation_status == "complete"
+    # A genuine resynthesis wrote a new file at a new path — proof the
+    # batch loop did not trust the stale "complete" status and skip it.
+    assert after.audio_path != old_audio_path
+    assert Path(after.audio_path).is_file()
+    assert not Path(old_audio_path).exists()
 
 
 # --- Per-project in-flight generation guard (T-03-25/T-03-26) ------------

@@ -177,28 +177,14 @@ async def run_batch_generation(project_id: str) -> None:
                 segment = session.get(Segment, segment_id)
                 if segment is None:
                     continue
-                if (
-                    segment.generation_status == "complete"
-                    and segment.audio_path
-                    and Path(segment.audio_path).is_file()
-                ):
-                    # Optimization only, not a correctness requirement:
-                    # regenerate_segment below would no-op via its own live
-                    # cache-key recompute anyway (Pitfall 3); skipping here
-                    # just avoids a spurious "generating" progress blip for
-                    # an already-good row.
-                    await queue.put(
-                        (
-                            "progress",
-                            {
-                                "segment_id": segment_id,
-                                "n": index,
-                                "total": total,
-                                "status": "complete",
-                            },
-                        )
-                    )
-                    continue
+                # No status-based skip here (CR-01): a segment's effective
+                # speaker can change via bulk-reassign/merge/voice-preset
+                # edit without its generation_status being reset, so
+                # "complete" is not sufficient proof the cached audio is
+                # still valid. Always defer to regenerate_segment's own
+                # live cache-key recompute below, which cache-hits (no
+                # synth call) when nothing actually changed and correctly
+                # detects a stale speaker otherwise.
                 segment.generation_status = "generating"
                 session.add(segment)
                 session.commit()
