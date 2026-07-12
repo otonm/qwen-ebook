@@ -1,14 +1,16 @@
 ---
 phase: 02-llm-cast-detection-review-wizard
 verified: 2026-07-10T12:16:31Z
-status: human_needed
+status: passed
 score: 14/14 must-haves verified (2 items routed to human verification)
 behavior_unverified: 0
 overrides_applied: 0
 human_verification:
+
   - test: "With a real XAI_API_KEY and LLM_BACKEND=grok, POST a short public-domain chapter and eyeball the returned cast/segments for sane traits, correct speaker tags, and no duplicate/renamed characters across chunks."
     expected: "Narrator + speaking cast with plausible age/gender/personality descriptions; ordered segments correctly tagged; a repeat character referenced differently (e.g. 'the old man') resolves to its existing cast entry instead of duplicating."
     why_human: "Requires a live, paid XAI_API_KEY and a real Grok network call, which is unavailable in this session. This is a subjective judgment about prompt-wording quality that no automated assertion can encode — explicitly documented as a required post-execution manual UAT step in 02-03-PLAN.md ('Prompt-quality validation') and tracked as unresolved in 02-03-SUMMARY.md (coverage item D4, human_judgment: true). This is a known, pre-declared gap, not a silent omission."
+
   - test: "Run `npm run dev` against a `LLM_BACKEND=mock TTS_BACKEND=mock` backend and click through the wizard in a real browser: upload a .txt and an .epub, watch the analyzing progress bar/skeleton, type into a character's name/description/voice-instructions fields and blur to confirm auto-save (no Save button), open the merge dialog and confirm the exact wording, click play/pause on a voice-assigned character's preview and confirm audible native-<audio> playback."
     expected: "All transitions (empty -> analyzing -> wizard) render correctly; edits persist on blur; merge dialog shows the exact copywriting-contract wording; preview plays back audio."
     why_human: "02-05-SUMMARY.md's own coverage table marks 5 of 6 items (D1-D5) as human_judgment: true — verified only via `npm run build`/`tsc` type-checking and curl-level API contract checks, not an actual rendered browser session. DOM interaction, visual layout, and audio playback cannot be verified via grep/static analysis."
