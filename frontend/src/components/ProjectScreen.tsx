@@ -79,7 +79,12 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
           />
         </div>
         <div className="xl:w-[30%]">
-          <ConfigPanel project={project} segments={liveSegments} generation={generation} />
+          <ConfigPanel
+            project={project}
+            segments={liveSegments}
+            generation={generation}
+            onRefresh={refetch}
+          />
         </div>
       </div>
     </div>

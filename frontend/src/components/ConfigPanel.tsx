@@ -1,9 +1,11 @@
 import { Loader2, Pause, Play } from "lucide-react"
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 import {
+  cancelBatchGeneration,
   previewUrl,
   runBatchGeneration,
+  triggerCharacterPreview,
   type Character,
   type Project,
   type Segment,
@@ -27,13 +29,41 @@ function ConfigField({ label, value }: { label: string; value: string }) {
   )
 }
 
-/** CFG-02: reuses CharacterCard's play/pause preview pattern (a hidden
- * <audio> + isPlaying toggle) for a compact, read-only row — this panel
- * only previews voices, editing/merging stays the wizard's job. */
-function CharacterPreviewRow({ character }: { character: Character }) {
+/** CFG-02/CFG-03: reuses CharacterCard's play/pause preview pattern (a
+ * hidden <audio> + isPlaying toggle) for a compact, read-only row — this
+ * panel only previews voices, editing/merging stays the wizard's job. A
+ * character whose voice was never (re)saved via PATCH has a permanently
+ * null preview_audio_path — show why the Play button is disabled and offer
+ * an on-demand "Generate preview" trigger. */
+function CharacterPreviewRow({
+  character,
+  onRefresh,
+}: {
+  character: Character
+  onRefresh: () => void
+}) {
   const [isPlaying, setIsPlaying] = useState(false)
+  const [isTriggeringPreview, setIsTriggeringPreview] = useState(false)
   const audioRef = useRef<HTMLAudioElement>(null)
   const hasPreview = Boolean(character.preview_audio_path)
+  // A parent refresh landing the new preview_audio_path is what ends the
+  // "generating" state — hasPreview flipping true unmounts the trigger
+  // button below, so isTriggeringPreview never needs an explicit reset.
+  const isGeneratingPreview = isTriggeringPreview && !hasPreview
+
+  // Preview generation is a background task (no SSE for it) — poll a few
+  // times after triggering so Play enables once it lands, without the user
+  // needing to manually refresh. Bounded so a failed generation doesn't
+  // poll forever.
+  useEffect(() => {
+    if (!isGeneratingPreview) return undefined
+    const interval = setInterval(onRefresh, 1500)
+    const timeout = setTimeout(() => clearInterval(interval), 15000)
+    return () => {
+      clearInterval(interval)
+      clearTimeout(timeout)
+    }
+  }, [isGeneratingPreview, onRefresh])
 
   function togglePlayback() {
     const audio = audioRef.current
@@ -45,6 +75,16 @@ function CharacterPreviewRow({ character }: { character: Character }) {
     }
   }
 
+  async function handleGeneratePreview() {
+    setIsTriggeringPreview(true)
+    try {
+      await triggerCharacterPreview(character.id)
+      onRefresh()
+    } catch {
+      setIsTriggeringPreview(false)
+    }
+  }
+
   return (
     <div className="flex items-center gap-2 rounded-md bg-background px-2 py-1.5">
       <Button
@@ -53,13 +93,29 @@ function CharacterPreviewRow({ character }: { character: Character }) {
         variant={isPlaying ? "default" : "outline"}
         disabled={!hasPreview}
         onClick={togglePlayback}
+        title={hasPreview ? undefined : "No preview generated yet"}
         aria-label={
           isPlaying ? `Pause preview for ${character.name}` : `Play preview for ${character.name}`
         }
       >
         {isPlaying ? <Pause /> : <Play />}
       </Button>
-      <span className="truncate text-sm">{character.name}</span>
+      <span className="flex-1 truncate text-sm">{character.name}</span>
+      {!hasPreview && (
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          disabled={isGeneratingPreview}
+          onClick={() => void handleGeneratePreview()}
+        >
+          {isGeneratingPreview ? (
+            <Loader2 className="size-3 animate-spin" />
+          ) : (
+            "Generate preview"
+          )}
+        </Button>
+      )}
       {hasPreview && (
         <audio
           ref={audioRef}
@@ -77,21 +133,29 @@ interface ConfigPanelProps {
   project: Project
   segments: Segment[]
   generation: GenerationStreamState
+  onRefresh: () => void
 }
 
 /** CFG-01/02/03: the right-side (~30% width) config panel — input file/
  * model/output format/output file, the character list with preview
  * controls, and the Generate All/Resume Generation CTA + live batch
  * progress (UI-SPEC Layout, Copywriting Contract). */
-export function ConfigPanel({ project, segments, generation }: ConfigPanelProps) {
+export function ConfigPanel({ project, segments, generation, onRefresh }: ConfigPanelProps) {
   const [isStarting, setIsStarting] = useState(false)
+  const [isCancelling, setIsCancelling] = useState(false)
 
   const hasAnyComplete = segments.some((segment) => segment.generation_status === "complete")
   const hasAnyIncomplete = segments.some((segment) => segment.generation_status !== "complete")
   // UI-SPEC Copywriting Contract: relabel to "Resume Generation" only for a
   // mix of complete/pending/error rows, not a fresh (all-pending) project.
   const isResuming = hasAnyComplete && hasAnyIncomplete
-  const isRunning = generation.status === "running" || isStarting
+  const isBatchRunning = generation.status === "running" || isStarting
+  // T-03-29: Generate All must also stay disabled while a per-row generate
+  // is in flight, not only during a batch SSE stream — otherwise a
+  // per-row-triggered "generating" segment can still be raced by Generate
+  // All firing a second batch over the same rows.
+  const anyGenerating = segments.some((segment) => segment.generation_status === "generating")
+  const isRunning = isBatchRunning || anyGenerating
   const failedCount = segments.filter((segment) => segment.generation_status === "error").length
   // Open Question 1's resolution: the join blocks (surfaces an error)
   // rather than silently skipping failed segments — no "last good"
@@ -109,6 +173,16 @@ export function ConfigPanel({ project, segments, generation }: ConfigPanelProps)
       await runBatchGeneration(project.id)
     } finally {
       setIsStarting(false)
+    }
+  }
+
+  async function handleStop() {
+    setIsCancelling(true)
+    try {
+      await cancelBatchGeneration(project.id)
+      onRefresh()
+    } finally {
+      setIsCancelling(false)
     }
   }
 
@@ -131,7 +205,7 @@ export function ConfigPanel({ project, segments, generation }: ConfigPanelProps)
         <h2 className="text-lg font-semibold">Characters</h2>
         <div className="flex flex-col gap-1">
           {project.characters.map((character) => (
-            <CharacterPreviewRow key={character.id} character={character} />
+            <CharacterPreviewRow key={character.id} character={character} onRefresh={onRefresh} />
           ))}
         </div>
       </section>
@@ -154,6 +228,22 @@ export function ConfigPanel({ project, segments, generation }: ConfigPanelProps)
             "Generate All"
           )}
         </Button>
+        {isBatchRunning && (
+          <div className="flex flex-col gap-1">
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              disabled={isCancelling}
+              onClick={() => void handleStop()}
+            >
+              {isCancelling ? <Loader2 className="animate-spin" /> : "Stop"}
+            </Button>
+            <p className="text-xs text-muted-foreground">
+              Stops before the next segment — the segment currently generating may still finish.
+            </p>
+          </div>
+        )}
         {generation.overall && (
           <>
             <Progress value={progressPercent} aria-label="Batch generation progress" />
