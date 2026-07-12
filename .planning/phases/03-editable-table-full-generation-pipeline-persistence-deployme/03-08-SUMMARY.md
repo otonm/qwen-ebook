@@ -153,6 +153,14 @@ None - no external service configuration required.
 
 Backend generation lifecycle is now safe and user-controlled: invalidate-only edits, a per-project in-flight guard on both batch and per-row generation, a cancel path, and an on-demand preview trigger. Plan 03-09 (frontend) can now build the Config Panel controls (Generate All / Cancel / per-row generate buttons, preview trigger) against these endpoints without racing backend state. No blockers identified.
 
+## Self-Check: PASSED
+
+- FOUND: .planning/phases/03-editable-table-full-generation-pipeline-persistence-deployme/03-08-SUMMARY.md
+- FOUND: 78a84e8 (Task 1 commit)
+- FOUND: dc176fe (Task 2 commit)
+- FOUND: f9a6585 (Task 3 commit)
+- FOUND: 492f7e2 (SUMMARY commit)
+
 ---
 *Phase: 03-editable-table-full-generation-pipeline-persistence-deployme*
 *Completed: 2026-07-12*
