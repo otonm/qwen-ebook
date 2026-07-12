@@ -29,6 +29,11 @@ BACKEND_HOST_PORT="${BACKEND_HOST_PORT:-8000}"
 # headroom for that first download.
 HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-900}"
 HF_CACHE_VOLUME="${HF_CACHE_VOLUME:-qwen-ebook-tts-hf-cache}"
+# Persists the backend's writable state (SQLite DB, uploads, output,
+# previews) across pod teardown/recreate — mirrors the Quadlet unit's
+# Volume=qwen-ebook-data:/data so this manual dev path doesn't silently
+# diverge from production and re-introduce the same data-loss bug (T-03-20).
+DATA_VOLUME="${DATA_VOLUME:-qwen-ebook-data}"
 # gfx1103-dev-host-only GPU workarounds (see backend/GPU-ENABLEMENT.md).
 # Empty by default so a from-scratch gfx1201 production VM (D-09, officially
 # ROCm-supported) gets neither; the dev host opts back in by exporting these.
@@ -85,6 +90,10 @@ log "Starting backend container (no GPU devices; TTS_BACKEND=http, TTS_SERVICE_U
 ${PODMAN} run -d --pod "${POD_NAME}" --name "${POD_NAME}-backend" \
   -e TTS_BACKEND=http \
   -e TTS_SERVICE_URL=http://localhost:8001 \
+  -v "${DATA_VOLUME}:/data" \
+  -e DATABASE_URL=sqlite:////data/projects.db \
+  -e UPLOAD_DIR=/data/uploads \
+  -e OUTPUT_DIR=/data/output \
   "${BACKEND_IMAGE}"
 
 log "Waiting up to ${HEALTH_TIMEOUT_SECONDS}s for TTS /healthz (model load can take a few minutes)..."

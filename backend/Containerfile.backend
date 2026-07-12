@@ -61,9 +61,16 @@ ENV PATH="/app/.venv/bin:${PATH}"
 # /app/app/config.py) live outside /app, so pre-create and chown them here
 # rather than relying on the app's own os.makedirs() at request time under
 # a user with no write access to /.
+#
+# /data is the mount point for the Quadlet unit's persistent named volume
+# (deploy/qwen-ebook-backend.container: Volume=qwen-ebook-data:/data, plus
+# DATABASE_URL/UPLOAD_DIR/OUTPUT_DIR env overrides pointing there) — a fresh
+# Podman named volume inherits this directory's ownership via copy-up, so it
+# must be pre-created and owned by appuser BEFORE the volume is mounted and
+# BEFORE the USER switch below (T-03-20).
 RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin appuser \
-    && mkdir -p /backend/uploads /backend/output \
-    && chown -R appuser:appuser /app /backend
+    && mkdir -p /backend/uploads /backend/output /data/uploads /data/output \
+    && chown -R appuser:appuser /app /backend /data
 USER appuser
 
 EXPOSE 8000

@@ -18,6 +18,15 @@ Pod=qwen-ebook.pod
 # CPU-only; GPU devices are scoped to qwen-ebook-tts.container only.
 Environment=TTS_BACKEND=http
 Environment=TTS_SERVICE_URL=http://localhost:8001
+# Persistent writable state (DB/uploads/output/previews) — the image itself
+# is otherwise ephemeral (overlay + AutoRemove-style teardown), so without
+# this the SQLite DB and generated audio are destroyed on every restart
+# (T-03-20). Mounted at /data, NOT /backend, so it does not shadow the
+# image-baked frontend bundle at /backend/static (T-03-22).
+Volume=qwen-ebook-data:/data
+Environment=DATABASE_URL=sqlite:////data/projects.db
+Environment=UPLOAD_DIR=/data/uploads
+Environment=OUTPUT_DIR=/data/output
 
 [Install]
 WantedBy=multi-user.target

@@ -26,3 +26,21 @@ def test_load_settings_rejects_unsupported_output_format(monkeypatch):
 
     with pytest.raises(ValueError, match="OUTPUT_FORMAT"):
         load_settings()
+
+
+def test_load_settings_honors_persistent_data_volume_overrides(monkeypatch):
+    """T-03-20: the Quadlet unit/run-local.sh point DATABASE_URL/UPLOAD_DIR/
+    OUTPUT_DIR at the persistent /data volume — prove those env overrides are
+    actually honored and that PREVIEW_DIR derives from the overridden
+    OUTPUT_DIR, not the image-baked default.
+    """
+    monkeypatch.setenv("DATABASE_URL", "sqlite:////data/projects.db")
+    monkeypatch.setenv("UPLOAD_DIR", "/data/uploads")
+    monkeypatch.setenv("OUTPUT_DIR", "/data/output")
+
+    settings = load_settings()
+
+    assert settings.DATABASE_URL == "sqlite:////data/projects.db"
+    assert settings.UPLOAD_DIR == "/data/uploads"
+    assert settings.OUTPUT_DIR == "/data/output"
+    assert settings.PREVIEW_DIR == "/data/output/previews"
