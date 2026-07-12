@@ -40,6 +40,11 @@ from app.cache_key import compute_cache_key
 from app.config import settings
 from app.db import engine, init_db
 from app.epub_parser import EpubParseError, extract_text
+from app.generation_worker import (
+    generation_progress_events,
+    has_pending_generation_queue,
+    run_batch_generation,
+)
 from app.models import Character, Project, Segment
 from app.tts_client import synthesize, tts_health
 from app.voices import best_guess_preset, list_presets
@@ -727,3 +732,42 @@ async def get_segment_audio(segment_id: str) -> Response:
         raise HTTPException(status_code=409, detail="Audio not ready")
 
     return Response(content=Path(audio_path).read_bytes(), media_type="audio/wav")
+
+
+@app.post("/projects/{project_id}/generate", status_code=202)
+async def generate_project(project_id: str) -> dict:
+    """CFG-03/GEN-05: kick off (or resume) the whole-project batch
+    generation run as a background task and return immediately — progress
+    is pushed over generation_stream. Fires even if a previous run already
+    completed; run_batch_generation's own stale-reset + per-segment cache
+    check make a re-invocation on an already-complete project a fast no-op
+    join, which is exactly what "Resume Generation" needs."""
+    with Session(engine) as session:
+        if session.get(Project, project_id) is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+    task = asyncio.create_task(run_batch_generation(project_id))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    return {"status": "started"}
+
+
+@app.get("/projects/{project_id}/generation-stream", response_class=EventSourceResponse)
+async def generation_stream(
+    project_id: str, _exists: None = Depends(_require_project_exists)
+) -> AsyncIterable[ServerSentEvent]:
+    """Mirrors analysis_stream's shape (WR-02's "already terminal, no
+    pending queue" fast path) but drains generation_progress_events with
+    the {segment_id, n, total, status} schema instead of analysis's
+    {stage, n, total}."""
+    if not has_pending_generation_queue(project_id):
+        # No batch run in flight and nothing buffered to drain — either
+        # nothing has been triggered yet, or a prior run's terminal event
+        # was already consumed. The client reads current per-segment status
+        # from GET /projects/{id} in either case.
+        yield ServerSentEvent(data={"status": "idle"}, event="done")
+        return
+
+    async for event_type, payload in generation_progress_events(project_id):
+        yield ServerSentEvent(data=payload, event=event_type)
