@@ -6,15 +6,15 @@ current_phase: 03
 current_phase_name: editable-table-full-generation-pipeline-persistence-deployme
 status: executing
 stopped_at: Phase 3 Plan 1 complete (real-GPU checkpoint verified)
-last_updated: "2026-07-12T09:45:00.000Z"
+last_updated: "2026-07-12T09:49:45.746Z"
 last_activity: 2026-07-12
-last_activity_desc: Phase 03 Plan 01 complete — editable table + generation/cache pipeline verified on real GPU
+last_activity_desc: Phase 03 execution started
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 13
-  completed_plans: 9
-  percent: 69
+  completed_plans: 10
+  percent: 67
 ---
 
 # Project State
@@ -30,8 +30,8 @@ See: .planning/PROJECT.md (updated 2026-07-11)
 
 Phase: 03 (editable-table-full-generation-pipeline-persistence-deployme) — EXECUTING
 Plan: 2 of 5
-Status: Plan 03-01 complete (editable table + generation/cache pipeline, real-GPU checkpoint verified); ready for 03-02
-Last activity: 2026-07-12 — Phase 03 Plan 01 complete
+Status: Ready to execute
+Last activity: 2026-07-12 — Phase 03 execution started
 
 Progress: [███████░░░] 69%
 
@@ -55,6 +55,7 @@ Progress: [███████░░░] 69%
 - Trend: -
 
 *Updated after each plan completion*
+| Phase 03 P02 | 15 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -65,6 +66,8 @@ Recent decisions affecting current work:
 
 - Roadmap: Vertical-slice (MVP) phase structure chosen over research's horizontal-leaning suggestion — Phase 1 front-loads the ROCm/Podman/Qwen-TTS GPU risk while still shipping a real upload-to-audio user flow, rather than a GPU-only infrastructure phase.
 - Roadmap: Coarse granularity (config.json) produced 3 phases; DEPL-02 (Tailscale-only exposure) was folded into Phase 3 rather than given its own phase, to avoid a single-requirement phase.
+- [Phase ?]: Bulk reassign only bumps generation_version to mark rows stale — it does not auto-trigger regeneration (batch regen is plan 03-03's scope)
+- [Phase ?]: Radix Checkbox onCheckedChange passes a boolean, not a DOM event — wired via table.toggleAllRowsSelected(!!value)/row.toggleSelected(!!value) instead of the research pattern's getToggleXSelectedHandler()
 
 ### Pending Todos
 
@@ -97,7 +100,7 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-11T19:47:12.730Z
+Last session: 2026-07-12T09:49:22.290Z
 Stopped at: Phase 3 UI-SPEC approved
 Resume file: .planning/phases/03-editable-table-full-generation-pipeline-persistence-deployme/03-UI-SPEC.md
 Next step: /gsd-plan-phase 3

@@ -29,7 +29,7 @@
 
 - [ ] **TBL-01**: Main UI shows an editable table (~70% width) with three columns: Narrator (dropdown of defined characters), Voice Instructions (free text), Text (free text)
 - [ ] **TBL-02**: User can edit the Narrator, Voice Instructions, or Text of any row
-- [ ] **TBL-03**: User can select multiple rows and bulk-reassign their Narrator/voice in one action
+- [x] **TBL-03**: User can select multiple rows and bulk-reassign their Narrator/voice in one action
 - [ ] **TBL-04**: Each row has a generate + play/pause button that synthesizes and previews that row's audio individually, on demand
 
 ### Generation & Audio
@@ -110,7 +110,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | WIZ-05 | Phase 2 | Pending |
 | TBL-01 | Phase 3 | Pending |
 | TBL-02 | Phase 3 | Pending |
-| TBL-03 | Phase 3 | Pending |
+| TBL-03 | Phase 3 | Complete |
 | TBL-04 | Phase 3 | Pending |
 | GEN-02 | Phase 3 | Pending |
 | GEN-03 | Phase 3 | Pending |
@@ -123,6 +123,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DEPL-02 | Phase 3 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 27 total
 - Mapped to phases: 27
 - Unmapped: 0 ✓
