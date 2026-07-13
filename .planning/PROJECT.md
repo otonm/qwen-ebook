@@ -8,6 +8,16 @@ A self-hosted web app that turns long text (ebooks, articles) into a multi-voice
 
 Given a long text, produce a natural-sounding, multi-character narrated audio file with minimal manual editing — the LLM does the heavy lifting of casting and segmenting, the user just fine-tunes.
 
+## Current Milestone: v1.1 Generation UX & Config Rework
+
+**Goal:** Replace ambiguous status indicators with a single clear color-coded generate/stop/play control everywhere audio is generated, and give the user real control over model, output format, filename, and downloading the finished file.
+
+**Target features:**
+- Segment table trimmed to 3 columns (Narrator / Voice Instructions / Text) — separate Status badge column dropped, state now conveyed by button color
+- One consistent yellow "Generate Preview" → red "Stop Generation" (kills the in-flight GPU call immediately) → green "Play" pattern, applied to: per-segment preview, per-character preview, and the Generate All batch flow. Any edit that invalidates audio reverts the control back to yellow.
+- Config panel: switch between two Qwen TTS models (1.7B / 0.6B, load-on-demand — only one resident in VRAM at a time), pick output format (FLAC / MP3 / Opus — WAV dropped), and set the output filename
+- Once all segments are generated and joined: a blue "Download" button plus a green "Play" to preview the joined file in-browser
+
 ## Requirements
 
 ### Validated
@@ -29,7 +39,7 @@ Given a long text, produce a natural-sounding, multi-character narrated audio fi
 
 ### Active
 
-(None — all 27 v1 requirements shipped and validated as of the v1.0 milestone.)
+- [ ] v1.1 Generation UX & Config Rework — see Current Milestone above; REQ-IDs pending REQUIREMENTS.md
 
 ### Out of Scope
 
@@ -90,4 +100,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-12 after v1.0 milestone completion*
+*Last updated: 2026-07-13 after starting v1.1 milestone*
