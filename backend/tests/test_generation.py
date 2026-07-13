@@ -91,11 +91,15 @@ def test_generate_segment_produces_audio():
     seed = _seed_segment()
     segment_id = seed["segment_id"]
 
+    # 04-03: fire-and-return 202, not a synchronous 200-with-segment-body —
+    # poll for the row to reach a terminal status instead.
     response = client.post(f"/segments/{segment_id}/generate")
-    assert response.status_code == 200
-    assert response.json()["generation_status"] == "complete"
+    assert response.status_code == 202
+    assert response.json()["status"] == "generating"
 
+    _wait_for_terminal([segment_id])
     segment = _get_segment(segment_id)
+    assert segment.generation_status == "complete"
     assert segment.audio_path is not None
     assert Path(segment.audio_path).is_file()
     assert segment.cache_key is not None
@@ -120,7 +124,8 @@ def test_generate_segment_passes_voice_instructions_as_instruct(monkeypatch):
 
     seed = _seed_segment(voice_instructions="sad and aggressive")
     response = client.post(f"/segments/{seed['segment_id']}/generate")
-    assert response.status_code == 200
+    assert response.status_code == 202
+    _wait_for_terminal([seed["segment_id"]])
     assert captured["instruct"] == "sad and aggressive"
 
 
@@ -135,7 +140,9 @@ def test_regenerate_only_on_edit_reuses_cache():
     seed = _seed_segment()
     segment_id = seed["segment_id"]
 
-    assert client.post(f"/segments/{segment_id}/generate").status_code == 200
+    first_response = client.post(f"/segments/{segment_id}/generate")
+    assert first_response.status_code == 202
+    _wait_for_terminal([segment_id])
 
     before = _get_segment(segment_id)
     audio_path_before = before.audio_path
@@ -143,7 +150,8 @@ def test_regenerate_only_on_edit_reuses_cache():
     mtime_before = Path(audio_path_before).stat().st_mtime_ns
 
     second_response = client.post(f"/segments/{segment_id}/generate")
-    assert second_response.status_code == 200
+    assert second_response.status_code == 202
+    _wait_for_terminal([segment_id])
 
     after = _get_segment(segment_id)
     assert after.cache_key == cache_key_before
@@ -155,7 +163,9 @@ def test_edit_text_busts_cache():
     seed = _seed_segment()
     segment_id = seed["segment_id"]
 
-    assert client.post(f"/segments/{segment_id}/generate").status_code == 200
+    first_response = client.post(f"/segments/{segment_id}/generate")
+    assert first_response.status_code == 202
+    _wait_for_terminal([segment_id])
     cache_key_before = _get_segment(segment_id).cache_key
 
     patch_response = client.patch(
@@ -166,7 +176,8 @@ def test_edit_text_busts_cache():
     assert _get_segment(segment_id).audio_path is None
 
     generate_response = client.post(f"/segments/{segment_id}/generate")
-    assert generate_response.status_code == 200
+    assert generate_response.status_code == 202
+    _wait_for_terminal([segment_id])
 
     after = _get_segment(segment_id)
     assert after.generation_status == "complete"
@@ -219,7 +230,9 @@ def test_patch_invalidates_without_regenerating(monkeypatch):
     seed = _seed_segment()
     segment_id = seed["segment_id"]
 
-    assert client.post(f"/segments/{segment_id}/generate").status_code == 200
+    response = client.post(f"/segments/{segment_id}/generate")
+    assert response.status_code == 202
+    _wait_for_terminal([segment_id])
     assert call_count["n"] == 1
     generated = _get_segment(segment_id)
     assert generated.audio_path is not None
@@ -431,7 +444,9 @@ def test_batch_skips_complete_rows():
 
     # Pre-generate the first segment via the per-row endpoint so it has a
     # real, cache-valid audio file on disk before the batch runs.
-    assert client.post(f"/segments/{segment_ids[0]}/generate").status_code == 200
+    pre_generate = client.post(f"/segments/{segment_ids[0]}/generate")
+    assert pre_generate.status_code == 202
+    _wait_for_terminal([segment_ids[0]])
     before = _get_segment(segment_ids[0])
     mtime_before = Path(before.audio_path).stat().st_mtime_ns
 
@@ -508,7 +523,9 @@ def test_batch_regenerates_after_reassign_to_different_voice():
     project_id, segment_ids = _seed_project_with_segments(["One."])
     segment_id = segment_ids[0]
 
-    assert client.post(f"/segments/{segment_id}/generate").status_code == 200
+    first_generate = client.post(f"/segments/{segment_id}/generate")
+    assert first_generate.status_code == 202
+    _wait_for_terminal([segment_id])
     before = _get_segment(segment_id)
     assert before.generation_status == "complete"
     old_audio_path = before.audio_path
