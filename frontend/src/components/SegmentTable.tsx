@@ -17,6 +17,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 
 import {
   bulkReassignSegments,
+  cancelSegmentGeneration,
   generateSegment,
   patchSegment,
   segmentAudioUrl,
@@ -49,6 +50,7 @@ interface SegmentTableProps {
   characters: Character[]
   onSegmentChange: (segment: Segment) => void
   generationLocked: boolean
+  onRefresh: () => void
 }
 
 const columnHelper = createColumnHelper<Segment>()
@@ -81,23 +83,37 @@ function StatusBadge({ status }: { status: GenerationStatus }) {
   )
 }
 
-/** TBL-04: one icon button does double duty — generates on first click
- * (no audio yet), auto-plays the result once it lands, and toggles
+/** TBL-04/GEN-06: one icon button does double duty — generates on first
+ * click (no audio yet), auto-plays the result once it lands, and toggles
  * play/pause on subsequent clicks once audio exists. Reuses
- * CharacterCard's play/pause + isPlaying + hidden <audio> pattern. */
+ * CharacterCard's play/pause + isPlaying + hidden <audio> pattern.
+ *
+ * Since 04-03, generateSegment fires-and-returns (202) instead of awaiting
+ * a result — this polls `onRefresh` (mirroring ConfigPanel's
+ * CharacterPreviewRow) until the row settles out of "generating". A
+ * bare-bones Stop button (D-04) appears whenever the row is generating and
+ * shows a distinct "Stopping…" state (D-03/D-05) held until a refetch
+ * confirms the backend has actually released the row. */
 function GeneratePlayButton({
   segment,
-  onSegmentChange,
+  onRefresh,
   generationLocked,
 }: {
   segment: Segment
-  onSegmentChange: (segment: Segment) => void
+  onRefresh: () => void
   generationLocked: boolean
 }) {
   const [isPlaying, setIsPlaying] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
+  const [isStopping, setIsStopping] = useState(false)
   const audioRef = useRef<HTMLAudioElement>(null)
   const autoplayRef = useRef(false)
+  // Tracks whether we've actually seen this row hit "generating" (from
+  // either our own trigger or an external one, e.g. a batch run) since the
+  // last settle — the signal a poll/refetch uses to know the row has since
+  // left "generating" for real, rather than reading a stale pre-click
+  // status as "already settled".
+  const hasObservedGeneratingRef = useRef(false)
   const hasAudio = Boolean(segment.audio_path)
   // T-03-29: a row already 'generating' via a batch (or another trigger)
   // must disable/spin this button too, not just its own local click flag —
@@ -108,7 +124,7 @@ function GeneratePlayButton({
   // holds it. Playback of already-generated audio doesn't touch the GPU,
   // so it stays enabled regardless (hasAudio already routes handleClick to
   // the play branch in that case).
-  const isDisabled = isRowGenerating || (!hasAudio && generationLocked)
+  const isDisabled = isRowGenerating || isStopping || (!hasAudio && generationLocked)
 
   useEffect(() => {
     if (autoplayRef.current && hasAudio && audioRef.current) {
@@ -116,6 +132,34 @@ function GeneratePlayButton({
       void audioRef.current.play()
     }
   }, [hasAudio, segment.audio_path])
+
+  // Poll for the 202+background-task result while we're the one waiting on
+  // a generation we triggered — mirrors CharacterPreviewRow's 1500ms
+  // interval + 60s ceiling so a failed synth can't poll forever.
+  useEffect(() => {
+    if (!isGenerating) return undefined
+    const interval = setInterval(onRefresh, 1500)
+    const timeout = setTimeout(() => clearInterval(interval), 60000)
+    return () => {
+      clearInterval(interval)
+      clearTimeout(timeout)
+    }
+  }, [isGenerating, onRefresh])
+
+  // The row settles (leaves "generating") once a refetch/SSE update lands —
+  // clear both the generating and stopping flags only once we've genuinely
+  // observed the transition, never on the first stale render.
+  useEffect(() => {
+    if (segment.generation_status === "generating") {
+      hasObservedGeneratingRef.current = true
+      return
+    }
+    if (hasObservedGeneratingRef.current) {
+      hasObservedGeneratingRef.current = false
+      setIsGenerating(false)
+      setIsStopping(false)
+    }
+  }, [segment.generation_status])
 
   async function handleClick() {
     if (hasAudio) {
@@ -131,10 +175,20 @@ function GeneratePlayButton({
     setIsGenerating(true)
     autoplayRef.current = true
     try {
-      const updated = await generateSegment(segment.id)
-      onSegmentChange(updated)
-    } finally {
+      await generateSegment(segment.id)
+      onRefresh()
+    } catch {
       setIsGenerating(false)
+    }
+  }
+
+  async function handleStop() {
+    setIsStopping(true)
+    try {
+      await cancelSegmentGeneration(segment.id)
+      onRefresh()
+    } catch {
+      setIsStopping(false)
     }
   }
 
@@ -166,6 +220,18 @@ function GeneratePlayButton({
           <Play />
         )}
       </Button>
+      {isRowGenerating && (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={isStopping}
+          onClick={() => void handleStop()}
+          aria-label={`Stop generating segment ${segment.order + 1}`}
+        >
+          {isStopping ? "Stopping…" : "Stop"}
+        </Button>
+      )}
       {hasAudio && (
         <audio
           ref={audioRef}
@@ -322,6 +388,7 @@ export function SegmentTable({
   characters,
   onSegmentChange,
   generationLocked,
+  onRefresh,
 }: SegmentTableProps) {
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
   const data = useMemo(
@@ -383,14 +450,14 @@ export function SegmentTable({
           <div className="flex items-center gap-1">
             <GeneratePlayButton
               segment={row.original}
-              onSegmentChange={onSegmentChange}
+              onRefresh={onRefresh}
               generationLocked={generationLocked}
             />
           </div>
         ),
       }),
     ],
-    [characters, onSegmentChange, generationLocked]
+    [characters, onSegmentChange, generationLocked, onRefresh]
   )
 
   const table = useReactTable({
