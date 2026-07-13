@@ -9,9 +9,9 @@ Requirements for the "Generation UX & Config Rework" milestone. Each maps to roa
 
 ### Generation Control (GEN)
 
-- [ ] **GEN-06**: User can stop a currently-generating segment's audio and have the in-flight GPU inference interrupted immediately, not merely queued to finish
-- [ ] **GEN-07**: User can stop a currently-generating character voice preview and have it interrupted immediately
-- [ ] **GEN-08**: User can stop a running "Generate All" batch and have the in-flight segment's generation interrupted immediately, not just prevented from starting the next one
+- [x] **GEN-06**: User can stop a currently-generating segment's audio and have the in-flight GPU inference interrupted immediately, not merely queued to finish
+- [x] **GEN-07**: User can stop a currently-generating character voice preview and have it interrupted immediately
+- [x] **GEN-08**: User can stop a running "Generate All" batch and have the in-flight segment's generation interrupted immediately, not just prevented from starting the next one
 - [ ] **GEN-09**: Each per-row segment audio control is a single button that shows yellow "Generate Preview" when idle or stale, red "Stop Generation" while generating, and green "Play" once audio exists
 - [ ] **GEN-10**: Each character preview control follows the same yellow/red/green generate/stop/play pattern as segments
 - [ ] **GEN-11**: The "Generate All" control follows the same yellow/red/green generate/stop/play pattern; once the joined output file is ready it additionally shows a green "Play" (in-browser preview of the joined file)
@@ -45,9 +45,9 @@ Explicitly excluded from v1.1. Documented to prevent scope creep.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| GEN-06 | Phase 4 | Pending |
-| GEN-07 | Phase 4 | Pending |
-| GEN-08 | Phase 4 | Pending |
+| GEN-06 | Phase 4 | Complete |
+| GEN-07 | Phase 4 | Complete |
+| GEN-08 | Phase 4 | Complete |
 | GEN-09 | Phase 7 | Pending |
 | GEN-10 | Phase 7 | Pending |
 | GEN-11 | Phase 7 | Pending |
@@ -60,6 +60,7 @@ Explicitly excluded from v1.1. Documented to prevent scope creep.
 | TBL-05 | Phase 7 | Pending |
 
 **Coverage:**
+
 - v1.1 requirements: 13 total
 - Mapped to phases: 13/13 ✓
 - Unmapped: 0
