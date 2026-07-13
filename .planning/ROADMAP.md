@@ -53,14 +53,14 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
   3. User can click Stop on a running Generate All batch and the currently in-flight segment's generation halts immediately, not just skips remaining queued segments
   4. Immediately after any stop completes, the user can start a new generation without errors or a stuck "still generating" state — proving the interruption is real, not cosmetic
 
-**Plans**: 1/4 plans executed
+**Plans**: 2/4 plans executed
 **Wave 1**
 
 - [x] 04-01-PLAN.md — D-02 spike: StoppingCriteria cancellation machinery + real-hardware abort-timing validation (checkpoint-gated)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 04-02-PLAN.md — HTTP cancel surface: tts_service POST /cancel + best-effort backend tts_client.cancel()
+- [x] 04-02-PLAN.md — HTTP cancel surface: tts_service POST /cancel + best-effort backend tts_client.cancel()
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -123,7 +123,7 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
 | 1. Upload-to-Audio Spike (TTS/ROCm De-risk) | v1.0 | 3/3 | Complete | 2026-07-09 |
 | 2. LLM Cast Detection & Review Wizard | v1.0 | 5/5 | Complete | 2026-07-10 |
 | 3. Editable Table, Full Generation Pipeline, Persistence & Deployment | v1.0 | 9/9 | Complete | 2026-07-12 |
-| 4. Immediate Cancellation | v1.1 | 1/4 | In Progress|  |
+| 4. Immediate Cancellation | v1.1 | 2/4 | In Progress|  |
 | 5. On-Demand Model Swap | v1.1 | 0/TBD | Not started | - |
 | 6. Config Panel — Output Format, Filename & Download | v1.1 | 0/TBD | Not started | - |
 | 7. Unified Generate/Stop/Play Button & Trimmed Segment Table | v1.1 | 0/TBD | Not started | - |
