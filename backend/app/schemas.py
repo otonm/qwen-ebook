@@ -5,16 +5,35 @@ one schema, three consumers)."""
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
+
+# PRESET-REWORK: the 5 fixed preset ids from voices.py, duplicated here as a
+# Literal (not imported) so this schema stays a plain, dependency-free
+# contract usable for OpenRouter's json_schema — analysis_client.py is the
+# module responsible for keeping the prompt's preset list in sync with
+# voices.PRESET_VOICES.
+VoicePresetId = Literal[
+    "narrator_sultry_woman",
+    "middle_sultry_woman",
+    "playful_student",
+    "bright_young_guy",
+    "reassuring_young_man",
+]
 
 
 class CharacterSuggestion(BaseModel):
     name: str
+    voice_preset: VoicePresetId = Field(
+        description="The closest-matching fixed voice preset for this character."
+    )
     description: str = Field(
         description=(
             "Voice-relevant traits only: age, gender, vocal tone/register, pace, "
             "accent, emotional demeanor. No occupation, plot role, relationships, "
-            "or other story/background detail."
+            "or other story/background detail. This is the picked preset's "
+            "description ADAPTED to this specific character."
         )
     )
     is_narrator: bool = False
@@ -26,9 +45,10 @@ class SegmentSuggestion(BaseModel):
     text: str
     voice_instructions: str = Field(
         description=(
-            "Spoken-delivery direction only (tone, pace, volume, emotional "
-            "inflection), e.g. 'narrates in a soothing voice'. Never a scene "
-            "or action description."
+            "Empty string for narration segments. For a single dialogue line: "
+            "a short spoken-delivery direction only (tone, pace, volume, "
+            "emotional inflection), e.g. 'whispers' or 'in a happy tone, "
+            "getting more excited'. Never a scene or action description."
         )
     )
 

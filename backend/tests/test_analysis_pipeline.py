@@ -78,7 +78,13 @@ def test_analysis_completes_and_is_retrievable_with_ordered_segments():
 
     for segment in project["segments"]:
         assert segment.get("character_name") or segment.get("character_id")
-        assert segment["voice_instructions"]
+    # PRESET-REWORK: narration segments are allowed (expected) to have an
+    # empty voice_instructions; dialogue segments carry a delivery instruction.
+    assert any(segment["voice_instructions"] == "" for segment in project["segments"])
+    assert any(segment["voice_instructions"] for segment in project["segments"])
+
+    for character in project["characters"]:
+        assert character["voice_preset"]
 
 
 def test_analysis_stream_emits_progress_then_done():

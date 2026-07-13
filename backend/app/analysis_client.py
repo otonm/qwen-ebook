@@ -24,40 +24,66 @@ import httpx
 
 from app.config import settings
 from app.schemas import CastAnalysisResult, CharacterSuggestion, SegmentSuggestion
+from app.voices import DEFAULT_PRESET, PRESET_VOICES, preset_description
 
 _OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions"
 
+
+def _build_preset_roster_block() -> str:
+    """Renders the 5 fixed presets (id + description) from voices.py so the
+    prompt and PRESET_VOICES can't drift apart (PRESET-REWORK)."""
+    lines = [f'- "{voice["name"]}": {voice["description"]}' for voice in PRESET_VOICES]
+    return "\n".join(lines)
+
+
 # CAST-01/CAST-03: instructs Grok to (a) detect narrator + speaking cast
-# with inferred traits, (b) split the text into ordered voice-tagged
-# segments, and (c) reconcile confident cross-chunk character matches
-# (D-08) when continuity context is supplied. Wording is intentionally
-# treated as iterative, not a fixed spec — see 02-03-PLAN.md "Prompt-
-# quality validation" for the required real-key manual UAT pass.
-CAST_ANALYSIS_SYSTEM_PROMPT = """You are preparing narrative text for multi-voice audio narration.
+# with inferred traits, cast each from the 5 fixed presets, and adapt the
+# picked preset's description to the character, (b) split the text into
+# ordered voice-tagged segments with dialogue-only delivery instructions,
+# and (c) reconcile confident cross-chunk character matches (D-08) when
+# continuity context is supplied. Wording is intentionally treated as
+# iterative, not a fixed spec — see 02-03-PLAN.md "Prompt-quality
+# validation" for the required real-key manual UAT pass.
+CAST_ANALYSIS_SYSTEM_PROMPT = f"""You are preparing narrative text for multi-voice audio narration.
 
 1. Identify the cast: the narrator plus every distinct speaking character
-   in the text. For each character, infer from context ONLY the traits
-   that shape how a voice actor should sound when reading their lines —
-   age, gender, vocal tone/register, typical pace or rhythm of speech,
-   accent or speech-pattern cues, and general emotional demeanor (e.g.
-   "gruff and clipped", "warm and unhurried", "high-pitched and excitable")
-   — and summarize them in a short `description`. Do NOT include the
-   character's occupation, role in the plot, relationships to other
+   in the text. For EACH character (including the narrator), pick the
+   single closest-matching voice preset from this fixed list of 5 personas
+   and set `voice_preset` to its id:
+
+{_build_preset_roster_block()}
+
+   Then ADAPT that preset's description to this specific character's
+   inferred traits from the text — age, gender, vocal tone/register, pace,
+   accent, and emotional demeanor (e.g. shy vs. playful, teenager vs.
+   mid-20s) — and put the adapted result in `description`. Do NOT include
+   the character's occupation, role in the plot, relationships to other
    characters, backstory, or any other story detail that has no bearing on
-   how they sound — a costume designer's brief, not a character bio. Mark
-   the narrator with `is_narrator=true`.
+   how they sound — a costume designer's brief, not a character bio.
+
+   Narrator handling: assign the narrator `voice_preset="{DEFAULT_PRESET}"`
+   (the default narrator persona) UNLESS the narration is clearly a
+   specific character's first- or third-person voice, in which case pick
+   and adapt the matching preset instead. Mark the narrator with
+   `is_narrator=true`.
 
 2. Split the text into an ordered list of `segments`. Each segment is a
    contiguous span of narration, or a single character's uninterrupted
    dialogue — never mix two speakers into one segment. Tag each segment
    with the speaking `character_name` (must match a name in your cast
-   list) and a short `voice_instructions` phrase — a delivery direction for
-   a voice actor covering only tone, pace, volume, and emotional inflection
-   for that specific line (e.g. "narrates in a soothing voice", "gaining
-   confidence", "shouting in panic", "whispered, hesitant"). Do NOT
-   restate what is happening in the scene, describe physical actions or
-   gestures, or summarize plot/story content in `voice_instructions` —
-   it is spoken-delivery guidance only, never a scene description.
+   list).
+
+   `voice_instructions` contract:
+   - Narration segments: `voice_instructions` MUST be an empty string "".
+     The character's own base voice (from step 1) already carries the
+     narration's steering.
+   - Dialogue segments (a single character's spoken line): a short
+     delivery direction for a voice actor covering only tone, pace,
+     volume, and emotional inflection for that specific line (e.g.
+     "whispers", "in a happy tone, getting more excited", "scared, voice
+     trembling"). Do NOT restate what is happening in the scene, describe
+     physical actions or gestures, or summarize plot/story content — it is
+     spoken-delivery guidance only, never a scene description.
 
 3. If you are given a `running_cast` (already-detected characters from
    earlier in this same book) and `recent_segments` (the most recently
@@ -71,14 +97,16 @@ CAST_ANALYSIS_SYSTEM_PROMPT = """You are preparing narrative text for multi-voic
 
 _MOCK_NARRATOR = CharacterSuggestion(
     name="Narrator",
-    description="A calm, steady narrator guiding the reader through the story.",
+    voice_preset=DEFAULT_PRESET,
+    description=preset_description(DEFAULT_PRESET),
     is_narrator=True,
 )
 _MOCK_CHARACTER = CharacterSuggestion(
     name="Alex",
+    voice_preset="playful_student",
     description="A determined supporting character who speaks with quiet confidence.",
 )
-_NARRATOR_INSTRUCTIONS = "narrates in a calm, steady voice"
+_NARRATOR_INSTRUCTIONS = ""
 _CHARACTER_INSTRUCTIONS = "speaks with quiet, determined confidence"
 
 

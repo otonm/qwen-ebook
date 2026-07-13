@@ -118,9 +118,14 @@ def _persist_result(
             name=suggestion.name,
             description=suggestion.description,
             is_narrator=suggestion.is_narrator,
-            # D-16: pre-fill from the inferred description as an editable
-            # default — CharacterSuggestion carries no voice_instructions
-            # field, so this is always the fill.
+            # PRESET-REWORK: persist the LLM's own preset pick rather than
+            # leaving it unset (best_guess_preset only kicks in for
+            # manually-added/edited characters with no preset).
+            voice_preset=suggestion.voice_preset,
+            # D-16: pre-fill from the LLM's adapted, per-character
+            # description as an editable default — this is the character's
+            # base voice, merged with each dialogue segment's own delivery
+            # instruction at TTS time (voices.merge_instructions).
             voice_instructions=suggestion.description,
         )
         session.add(character)

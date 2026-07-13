@@ -1,73 +1,85 @@
-"""CustomVoice preset roster for the wizard's voice picker (WIZ-03).
+"""Fixed voice-preset roster for the wizard's voice picker and the analysis
+LLM's casting pick (PRESET-REWORK).
 
-Confirmed 2026-07-12 by calling tts_service.model.get_supported_speakers()
-inside the live qwen-ebook-tts container on the production RX 9070 XT VM
-(resolves the placeholder previously shipped here — see git history).
-DEFAULT_SPEAKER server-side is "aiden".
+5 curated personas, each with a fleshed-out steering `description` the
+analysis LLM adapts per character (see analysis_client.py's system prompt,
+built from `preset_description()` so prompt and roster can't drift) and a
+`speaker` — the underlying Qwen CustomVoice speaker name that actually drives
+timbre, confirmed 2026-07-12 by calling
+tts_service.model.get_supported_speakers() inside the live qwen-ebook-tts
+container on the production RX 9070 XT VM. DEFAULT_SPEAKER server-side is
+"aiden"; DEFAULT_PRESET here (narrator_sultry_woman) is the narrator
+fallback and the "nothing selected" fallback.
 
-# ponytail: gender/style in each label is a best-effort read of the speaker
-# name, not vendor metadata (Qwen ships no per-speaker description) — if a
-# label is wrong, the wizard's play/pause preview (WIZ-04) is the actual
-# source of truth; re-label from listening, don't guess harder here.
+# ponytail: speaker->persona mapping below is best-effort timbre matching,
+# not vendor metadata (Qwen ships no per-speaker description) — the wizard's
+# play/pause preview is the actual source of truth, and `instruct` steering
+# (commit f51f748) is the real lever. Re-map from listening, don't guess
+# harder here.
 """
 
 from __future__ import annotations
 
+DEFAULT_PRESET = "narrator_sultry_woman"
+
 PRESET_VOICES: list[dict] = [
     {
-        "name": "",
-        "label": "Default narrator (auto-selected)",
-        "keywords": (),
+        "name": "narrator_sultry_woman",
+        "label": "Narrator (young sultry woman)",
+        "keywords": ("narrator", "sultry", "young woman"),
+        "speaker": "serena",
+        "description": (
+            "A young woman with a deep, sultry voice. Warm lower register, "
+            "unhurried pace, and a calm, self-assured demeanor — the default "
+            "narrator voice when no other persona fits better."
+        ),
     },
     {
-        # Checked before the generic male presets below: an "elderly male
-        # grandfather" description contains both "elderly" and "male", and
-        # this more specific match should win over the generic ones.
-        "name": "uncle_fu",
-        "label": "Uncle Fu (male, older/character)",
-        "keywords": ("old man", "elderly", "grandfather", "uncle", "gruff"),
+        "name": "middle_sultry_woman",
+        "label": "Middle-aged sultry woman",
+        "keywords": ("middle-aged woman", "mature woman", "sultry"),
+        "speaker": "vivian",
+        "description": (
+            "A middle-aged woman with a sultry voice. Slightly deeper and "
+            "more grounded than a younger voice, measured pace, and a "
+            "composed, worldly emotional demeanor."
+        ),
     },
     {
-        "name": "aiden",
-        "label": "Aiden (male)",
-        "keywords": ("male", "man", "boy", "he ", "his "),
+        "name": "playful_student",
+        "label": "Playful student (19)",
+        "keywords": ("student", "teenager", "19-year-old", "playful", "young woman"),
+        "speaker": "sohee",
+        "description": (
+            "A 19-year-old student with a youthful, playful, and bright "
+            "tone. Quick, energetic pace and an upbeat, curious emotional "
+            "demeanor."
+        ),
     },
     {
-        "name": "dylan",
-        "label": "Dylan (male)",
-        "keywords": ("male", "man", "boy"),
+        "name": "bright_young_guy",
+        "label": "Bright young guy",
+        "keywords": ("young guy", "young man", "bright", "positive"),
+        "speaker": "ryan",
+        "description": (
+            "A young guy with a bright tone and a positive attitude. Brisk, "
+            "lively pace and an enthusiastic, upbeat emotional demeanor."
+        ),
     },
     {
-        "name": "eric",
-        "label": "Eric (male)",
-        "keywords": ("male", "man"),
-    },
-    {
-        "name": "ryan",
-        "label": "Ryan (male)",
-        "keywords": ("male", "young man", "boy"),
-    },
-    {
-        "name": "serena",
-        "label": "Serena (female)",
-        "keywords": ("female", "woman", "girl", "she ", "her "),
-    },
-    {
-        "name": "vivian",
-        "label": "Vivian (female)",
-        "keywords": ("female", "woman"),
-    },
-    {
-        "name": "sohee",
-        "label": "Sohee (female)",
-        "keywords": ("female", "young woman", "girl"),
-    },
-    {
-        "name": "ono_anna",
-        "label": "Ono Anna (female)",
-        "keywords": ("female", "woman"),
+        "name": "reassuring_young_man",
+        "label": "Reassuring young man",
+        "keywords": ("young man", "reassuring", "deep voice"),
+        "speaker": "aiden",
+        "description": (
+            "A young man with a deep, reassuring voice. Steady, measured "
+            "pace and a calm, trustworthy emotional demeanor."
+        ),
     },
 ]
+
+_PRESET_BY_NAME: dict[str, dict] = {voice["name"]: voice for voice in PRESET_VOICES}
+_DEFAULT_SPEAKER = _PRESET_BY_NAME[DEFAULT_PRESET]["speaker"]
 
 
 def list_presets() -> list[dict]:
@@ -75,14 +87,52 @@ def list_presets() -> list[dict]:
     return [{"name": voice["name"], "label": voice["label"]} for voice in PRESET_VOICES]
 
 
+def preset_speaker(preset_id: str) -> str:
+    """Resolve a preset id to the Qwen CustomVoice speaker name to pass to
+    tts_client.synthesize(). Empty/unknown preset ids fall back to the
+    DEFAULT_PRESET's speaker (the "auto-selected" sentinel, WIZ-03)."""
+    voice = _PRESET_BY_NAME.get(preset_id)
+    return voice["speaker"] if voice else _DEFAULT_SPEAKER
+
+
+def preset_description(preset_id: str) -> str:
+    """Return a preset's steering description (used to build the analysis
+    prompt and as the wizard's editable default)."""
+    voice = _PRESET_BY_NAME.get(preset_id)
+    return voice["description"] if voice else _PRESET_BY_NAME[DEFAULT_PRESET]["description"]
+
+
+def merge_instructions(base: str, delivery: str) -> str:
+    """Combine a character's adapted base voice description with a
+    segment's delivery instruction into one `instruct` string for TTS.
+    Narration segments carry an empty delivery, so the merge yields just
+    the base; a dialogue line yields base + delivery. Empty parts are
+    stripped and skipped so no stray separators appear."""
+    parts = [part.strip() for part in (base, delivery) if part and part.strip()]
+    return ". ".join(parts)
+
+
 def best_guess_preset(description: str) -> str | None:
     """D-16 best-guess pick: match simple keyword signals in `description`
-    against each preset's tags, falling back to the first (narrator) preset
-    when nothing matches. Returns None only if the roster is empty."""
+    against each preset's tags, falling back to DEFAULT_PRESET when nothing
+    matches. Returns None only if the roster is empty."""
     if not PRESET_VOICES:
         return None
     lowered = description.lower()
     for voice in PRESET_VOICES:
         if any(keyword in lowered for keyword in voice["keywords"]):
             return voice["name"]
-    return PRESET_VOICES[0]["name"]
+    return DEFAULT_PRESET
+
+
+if __name__ == "__main__":
+    assert merge_instructions("base voice", "whispers") == "base voice. whispers"
+    assert merge_instructions("base voice", "") == "base voice"
+    assert merge_instructions("", "whispers") == "whispers"
+    assert merge_instructions("", "") == ""
+    assert preset_speaker("") == _DEFAULT_SPEAKER
+    assert preset_speaker("not-a-real-preset") == _DEFAULT_SPEAKER
+    assert preset_speaker(DEFAULT_PRESET) == _DEFAULT_SPEAKER
+    assert len(PRESET_VOICES) == 5
+    assert best_guess_preset("") == DEFAULT_PRESET
+    print("voices self-check passed")

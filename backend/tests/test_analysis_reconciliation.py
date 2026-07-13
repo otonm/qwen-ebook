@@ -90,7 +90,14 @@ def _install_fake_openrouter(monkeypatch, fake_result: CastAnalysisResult) -> di
 
 def test_real_backend_keeps_system_prompt_and_book_text_in_separate_roles(monkeypatch):
     fake_result = CastAnalysisResult(
-        characters=[CharacterSuggestion(name="Narrator", description="calm", is_narrator=True)],
+        characters=[
+            CharacterSuggestion(
+                name="Narrator",
+                voice_preset="narrator_sultry_woman",
+                description="calm",
+                is_narrator=True,
+            )
+        ],
         segments=[
             SegmentSuggestion(
                 order=0, character_name="Narrator", text="Hi.", voice_instructions="calm"
@@ -125,7 +132,13 @@ def test_real_backend_passes_continuity_context_in_user_message_not_system(monke
     fake_result = CastAnalysisResult(characters=[], segments=[])
     calls = _install_fake_openrouter(monkeypatch, fake_result)
 
-    running_cast = [CharacterSuggestion(name="Captain Reyes", description="an old sailor")]
+    running_cast = [
+        CharacterSuggestion(
+            name="Captain Reyes",
+            voice_preset="reassuring_young_man",
+            description="an old sailor",
+        )
+    ]
     recent_segments = [
         SegmentSuggestion(
             order=0,
@@ -200,8 +213,17 @@ def test_run_analysis_multi_chunk_reconciles_duplicate_and_orders_segments_globa
         if len(calls) == 1:
             return CastAnalysisResult(
                 characters=[
-                    CharacterSuggestion(name="Narrator", description="calm", is_narrator=True),
-                    CharacterSuggestion(name="Marcus", description="an old sailor"),
+                    CharacterSuggestion(
+                        name="Narrator",
+                        voice_preset="narrator_sultry_woman",
+                        description="calm",
+                        is_narrator=True,
+                    ),
+                    CharacterSuggestion(
+                        name="Marcus",
+                        voice_preset="reassuring_young_man",
+                        description="an old sailor",
+                    ),
                 ],
                 segments=[
                     SegmentSuggestion(
@@ -221,8 +243,12 @@ def test_run_analysis_multi_chunk_reconciles_duplicate_and_orders_segments_globa
         return CastAnalysisResult(
             characters=[
                 # Same name as chunk 1 -> must reconcile, not duplicate (D-08).
-                CharacterSuggestion(name="Marcus", description="an old sailor"),
-                CharacterSuggestion(name="Elena", description="a young apprentice"),
+                CharacterSuggestion(
+                    name="Marcus", voice_preset="reassuring_young_man", description="an old sailor"
+                ),
+                CharacterSuggestion(
+                    name="Elena", voice_preset="playful_student", description="a young apprentice"
+                ),
             ],
             segments=[
                 SegmentSuggestion(
@@ -283,7 +309,14 @@ def test_run_analysis_multi_chunk_emits_per_chunk_sse_progress(monkeypatch):
 
     async def fake_analyze(text, running_cast=None, recent_segments=None):
         return CastAnalysisResult(
-            characters=[CharacterSuggestion(name="Narrator", description="calm", is_narrator=True)],
+            characters=[
+                CharacterSuggestion(
+                    name="Narrator",
+                    voice_preset="narrator_sultry_woman",
+                    description="calm",
+                    is_narrator=True,
+                )
+            ],
             segments=[
                 SegmentSuggestion(
                     order=0, character_name="Narrator", text=text[:20], voice_instructions="calm"
