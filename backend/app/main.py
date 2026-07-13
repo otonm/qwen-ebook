@@ -56,7 +56,7 @@ from app.generation_worker import (
 )
 from app.models import Character, Project, Segment
 from app.tts_client import synthesize, tts_health
-from app.voices import best_guess_preset, list_presets
+from app.voices import best_guess_preset, list_presets, merge_instructions, preset_speaker
 
 logger = logging.getLogger(__name__)
 
@@ -433,13 +433,16 @@ async def _generate_preview(character_id: str, version: int) -> None:
         name = character.name
         description = (character.description or "").strip()
         instruct = character.voice_instructions or None
-        speaker = character.voice_preset
-        if not speaker:
-            # "" (the sole shipped preset's persisted value, WIZ-03) means
-            # "auto-selected" just as much as None does — falling back only
-            # on None let a touched-but-unchanged preset dropdown silently
-            # defeat best-guess voice selection (CR-02).
-            speaker = best_guess_preset(character.voice_instructions or description) or ""
+        preset_id = character.voice_preset
+        if not preset_id:
+            # "" (or None) means "auto-selected" (WIZ-03) — falling back
+            # only on None let a touched-but-unchanged preset dropdown
+            # silently defeat best-guess voice selection (CR-02).
+            preset_id = best_guess_preset(character.voice_instructions or description) or ""
+        # PRESET-REWORK: Character.voice_preset stores a preset id, not a
+        # raw Qwen speaker name — resolve it to the real speaker synthesize()
+        # needs.
+        speaker = preset_speaker(preset_id)
 
     intro_line = f"Hi, my name is {name} and I am a {description}."
 
@@ -752,17 +755,17 @@ def _resolve_segment_speaker(segment: Segment, character: Character | None) -> s
     """Same preset-then-best-guess-fallback resolution _generate_preview
     uses for characters, applied at segment granularity so the segment's
     own Voice Instructions cell — not just the character's — can steer the
-    fallback guess. This only resolves the SPEAKER (preset); the segment's
-    voice_instructions text is passed separately as `instruct` free-text
-    steering in regenerate_segment, on top of whichever speaker this
-    returns."""
-    speaker = character.voice_preset if character else None
-    if not speaker:
+    fallback guess. This only resolves the SPEAKER (the real Qwen speaker
+    name, via preset_speaker); the character's base voice_instructions and
+    the segment's own voice_instructions text are merged separately as
+    `instruct` free-text steering in regenerate_segment."""
+    preset_id = character.voice_preset if character else None
+    if not preset_id:
         fallback_text = segment.voice_instructions or (
             character.description if character else ""
         )
-        speaker = best_guess_preset(fallback_text) or ""
-    return speaker
+        preset_id = best_guess_preset(fallback_text) or ""
+    return preset_speaker(preset_id)
 
 
 async def regenerate_segment(segment_id: str, version: int) -> None:
@@ -777,8 +780,18 @@ async def regenerate_segment(segment_id: str, version: int) -> None:
             return
         character = session.get(Character, segment.character_id)
         speaker = _resolve_segment_speaker(segment, character)
-        instruct = segment.voice_instructions or None
-        cache_key = compute_cache_key(speaker, segment.voice_instructions, segment.text)
+        # PRESET-REWORK merge point: the final instruct steering is the
+        # character's adapted base voice PLUS this line's delivery — not
+        # just the segment's own short instruction, which used to drop the
+        # character's base voice entirely. For narration (empty segment
+        # delivery) this yields just the narrator's base, no special-casing
+        # needed. Fed into compute_cache_key too, so a change to the
+        # character's base voice naturally busts the segment cache.
+        merged_instructions = merge_instructions(
+            character.voice_instructions if character else "", segment.voice_instructions
+        )
+        instruct = merged_instructions or None
+        cache_key = compute_cache_key(speaker, merged_instructions, segment.text)
         text = segment.text
         existing_cache_key = segment.cache_key
         existing_audio_path = segment.audio_path
