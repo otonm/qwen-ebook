@@ -1,348 +1,213 @@
 # Architecture Research
 
-**Domain:** Self-hosted ebook-to-audiobook narration app (LLM text analysis + multi-voice TTS + audio joining, single-user, GPU-backed)
-**Researched:** 2026-07-09
-**Confidence:** MEDIUM-HIGH (grounded in real open-source projects of near-identical shape, plus official Podman/ROCm docs; specific numeric tuning values are LOW confidence and should be validated during implementation)
+**Domain:** Integration research for v1.1 milestone — generation-control (immediate-cancel) and config-panel additions (model swap, codec, download) to an existing self-hosted TTS pipeline
+**Researched:** 2026-07-13
+**Confidence:** HIGH (call boundary, cancel semantics, and the library hook capability 1 depends on are all verified directly against this repo's own code and the installed `qwen_tts` wheel — not assumed)
 
-## Standard Architecture
+This is not a greenfield domain survey. It supersedes the v1.0 ARCHITECTURE.md (2026-07-09) for this milestone's purposes: it documents the REAL current architecture (verified by reading the code) and the specific integration points the 4 new capabilities need.
 
-### System Overview
+## The Real Current Call Boundary (verified, not assumed)
 
-```
-┌───────────────────────────────────────────────────────────────────────┐
-│  CLIENT (browser)                                                      │
-│  ┌────────────────────────┐   ┌───────────────────────────────────┐   │
-│  │ Segment Table (70%)     │   │ Config Sidebar (30%)               │   │
-│  │ editable rows, status   │   │ file/model/output, live progress   │   │
-│  │ badges per row          │   │ (poll or SSE)                      │   │
-│  └────────────┬────────────┘   └────────────┬────────────────────┘   │
-└───────────────┼───────────────────────────────┼─────────────────────┘
-                │  REST (CRUD) + progress stream (SSE/poll)
-┌───────────────▼───────────────────────────────▼─────────────────────┐
-│  BACKEND / ORCHESTRATOR (single Podman container, CPU-only)          │
-│  ┌────────────┐ ┌───────────────┐ ┌───────────┐ ┌─────────────────┐ │
-│  │ Upload +    │ │ LLM Analysis  │ │ Job Queue │ │ Audio Joiner    │ │
-│  │ EPUB Parser │ │ Client (xAI)  │ │ (1 worker)│ │ (ffmpeg concat) │ │
-│  └──────┬──────┘ └──────┬────────┘ └─────┬─────┘ └────────┬────────┘ │
-│         │               │                │                │          │
-│  ┌──────▼───────────────▼────────────────▼────────────────▼───────┐ │
-│  │                  Project / Segment / Character models            │ │
-│  └──────────────────────────────┬───────────────────────────────────┘ │
-└─────────────────────────────────┼─────────────────────────────────────┘
-                                   │  HTTP (podman internal network)
-        ┌──────────────────────────┼───────────────┐   outbound HTTPS
-        │                          │               ▼
-┌───────▼────────────────┐  ┌──────▼──────────────────┐   ┌──────────────┐
-│ TTS SERVICE             │  │ PERSISTENCE              │   │ xAI Grok API │
-│ (separate Podman        │  │ SQLite (metadata/state)  │   │ (cloud, LLM  │
-│  container, GPU         │  │ + filesystem             │   │  analysis)   │
-│  passthrough: /dev/kfd, │  │ (source text, per-segment│   └──────────────┘
-│  /dev/dri; Qwen TTS on  │  │  audio, final output)    │
-│  ROCm, RX 9070 XT)      │  └───────────────────────────┘
-│  concurrency=1           │
-└──────────────────────────┘
-```
+The milestone brief asked "in-process import? subprocess? separate container over HTTP?" — it's the last one, confirmed three ways:
 
-### Component Responsibilities
+1. **Two separate Podman Quadlet units in one pod** (`deploy/qwen-ebook-tts.container`, `deploy/qwen-ebook-backend.container`): the TTS container gets `AddDevice=/dev/kfd`/`/dev/dri` and `User=0`; the backend container gets neither and is explicitly commented `# No AddDevice here — the backend never imports torch/qwen-tts and stays CPU-only`. Real process/container isolation, not a Python-level boundary.
+2. **`backend/app/tts_client.py`**: the `TTS_BACKEND=http` path does a synchronous `httpx.post(f"{TTS_SERVICE_URL}/synthesize", ...)` with a 300s read timeout, called from request handlers via `starlette.concurrency.run_in_threadpool`. The module docstring states the constraint explicitly: "This backend package must never `import torch` / `import qwen_tts` directly ... all GPU work crosses this HTTP boundary instead."
+3. **`backend/tts_service/server.py`**: a second, independent FastAPI app (`POST /synthesize`, `GET /healthz`) that owns the model. `backend/tts_service/model.py` loads `Qwen3TTSModel.from_pretrained(...)` ONCE at module-import time (triggered by the outer app's `lifespan`) and holds it resident — "never reload per request" per its own docstring.
 
-| Component | Responsibility | Typical Implementation |
-|-----------|----------------|-------------------------|
-| Frontend SPA | Editable segment table, cast wizard, config sidebar, live progress display | React/Vue/Svelte SPA or lightweight server-rendered + fetch/HTMX; talks only to backend REST API |
-| Backend API/Orchestrator | Project CRUD, file parsing, LLM call orchestration, job queue, state machine, triggers ffmpeg | FastAPI (Python) — matches Qwen TTS ecosystem tooling (Python-native, async, easy HTTP client to TTS service) |
-| LLM Analysis Client | Sends source text (chunked if long) to xAI Grok, parses structured JSON (cast + segments), reconciles character identity across chunks | A backend *module*, not a separate service — outbound HTTPS call to cloud API, no local compute |
-| TTS Inference Service | Loads Qwen TTS model once, keeps it resident in VRAM, exposes HTTP endpoint for single-segment synthesis | Separate Podman container, ROCm base image, OpenAI-compatible `/v1/audio/speech`-style endpoint (this is the established pattern — see `Qwen3-TTS-Openai-Fastapi-Rocm` and similar) |
-| Job Queue | Tracks per-segment generation jobs, ensures sequential GPU access, survives restarts | SQLite-backed queue (segment `status` column doubles as queue state) + single in-process async worker task — no Redis/Celery needed at this scale |
-| Audio Joiner | Concatenates per-segment audio into final MP3/WAV in order | `ffmpeg` subprocess using the concat demuxer (file-list based, not filter_complex) |
-| Persistence Layer | Durable state for projects, cast, segments, and binary audio artifacts | SQLite for structured/queryable state; filesystem (one directory per project) for text and audio blobs — never store audio blobs in the DB |
+So: **HTTP microservice boundary, both processes long-lived, single shared GPU, single resident model.** Not subprocess-per-call, not in-process import, not a task queue (Celery/Redis explicitly out per CLAUDE.md).
 
-## Recommended Project Structure
+### Why this matters for "immediate kill"
 
-```
-qwen-ebook/
-├── backend/
-│   ├── app/
-│   │   ├── api/                 # FastAPI routers: projects, upload, characters, segments, progress
-│   │   ├── models/               # Project, Character, Segment ORM models + Pydantic schemas
-│   │   ├── services/
-│   │   │   ├── epub_parser.py    # .txt/.epub -> plain text + chapter boundaries
-│   │   │   ├── llm_analysis.py   # xAI Grok client: cast detection + segmentation, chunk reconciliation
-│   │   │   ├── tts_client.py     # HTTP client to TTS service (retries, timeouts)
-│   │   │   ├── job_queue.py      # asyncio worker consuming pending segments sequentially
-│   │   │   └── audio_joiner.py   # ffmpeg concat wrapper
-│   │   ├── db.py                 # SQLite engine/session
-│   │   └── main.py               # app entrypoint, startup hook resumes interrupted jobs
-│   └── Containerfile              # no GPU deps — thin, fast rebuilds
-├── tts-service/
-│   ├── server.py                  # FastAPI wrapping Qwen TTS model, single endpoint, concurrency=1
-│   └── Containerfile               # ROCm base image, ~multi-GB, rebuilt rarely
-├── frontend/
-│   └── src/
-│       ├── components/            # SegmentTable, ConfigSidebar, CastWizard
-│       └── api/                   # typed REST client + progress polling/SSE hook
-├── data/                            # bind-mounted volume, NOT in image
-│   └── projects/{project_id}/
-│       ├── source.txt
-│       ├── segments/{segment_id}.wav
-│       └── output.mp3
-└── deploy/
-    ├── podman-compose.yml (or Quadlet .container units)
-    └── db.sqlite (bind-mounted, lives outside containers)
-```
+`run_in_threadpool` (→ `anyio.to_thread.run_sync`) does **not** deliver `asyncio.CancelledError` to the awaiting coroutine until the underlying blocking call returns — a native OS thread can't be forcibly killed. This is already documented in the codebase's own `cancel_generation` docstring in `main.py`:
 
-### Structure Rationale
+> "cancelling the segment currently mid-synth only takes effect once that HTTP call returns; this stops progression to the NEXT segment, it does not abort the in-flight one."
 
-- **`backend/` vs `tts-service/` as separate top-level directories, separate Containerfiles:** they have entirely different dependency footprints (thin Python web app vs. multi-GB ROCm/PyTorch image) and different rebuild cadences. Coupling them in one image means every backend code change triggers a full GPU-stack rebuild.
-- **`data/` outside both container images, bind-mounted:** projects must survive container rebuants/redeploys; putting audio/text in the image or in an anonymous volume risks data loss on `podman-compose down` or image rebuild.
-- **`services/` module boundary inside backend:** each service (parser, LLM client, TTS client, queue, joiner) is independently testable/mockable — critical because local dev has no GPU (per project constraints) and no desire to hit the real xAI API on every test run.
+And the frontend already shows this to the user verbatim (`ConfigPanel.tsx`): *"Stops before the next segment — the segment currently generating may still finish."* This is precisely the behavior capability 1 must replace.
 
-## Architectural Patterns
+**Per-segment generate has no cancel concept at all today** — `POST /segments/{id}/generate` (`main.py`) `await`s `regenerate_segment` synchronously inside the request/response cycle. There is no task handle for any other request to reach in and cancel; only the batch path (`_running_generations: dict[project_id, Task]` in `generation_worker.py`) has a cancellable task registry.
 
-### Pattern 1: TTS as a separate, GPU-scoped microservice behind a plain HTTP API
+## Component Responsibilities (current)
 
-**What:** The Qwen TTS model runs in its own container, loads once at startup, and exposes a minimal synchronous HTTP endpoint (e.g., `POST /synthesize {text, voice_instructions} -> audio bytes`). The web backend never touches the GPU directly.
+| Component | Responsibility | Notes |
+|-----------|-----------------|-------|
+| `backend/app/main.py` | HTTP surface: project/character/segment CRUD, generate/cancel endpoints, SSE streams, static file serving | Owns `regenerate_segment` (single source of truth for cache-key + synth, called by both per-row and batch paths) |
+| `backend/app/generation_worker.py` | Batch state machine, SSE progress queue registry, **global single-flight lock** (`_active_generation_label` module global) | Lock is app-wide, not per-project — "the constraint is the one shared GPU, not any one project" |
+| `backend/app/tts_client.py` | Sync HTTP client to `tts_service`, `mock`/`http` backend switch | Only place `TTS_SERVICE_URL` is used; only place that would gain a `model_id`/cancel param |
+| `backend/tts_service/server.py` | FastAPI process #2: `/synthesize`, `/healthz`, GPU keepalive loop | Owns nothing about generation locking itself — comment confirms "`/synthesize` has no concurrency control of its own" (relies entirely on the backend's single-flight lock never sending it 2 concurrent requests) |
+| `backend/tts_service/model.py` | Model load (module-level singleton today), `synthesize_wav` | Loaded once at process start; `MODEL_NAME` is a hardcoded constant today |
+| `backend/app/cache_key.py` | Content-hash cache key: `(resolved_speaker, voice_instructions, text, TTS_MODEL_VERSION)` | `TTS_MODEL_VERSION` is currently a **hardcoded string constant** ("only one model is in scope for v1") — this is the exact seam capability 2 needs to turn live |
+| `backend/app/audio_join.py` | ffmpeg concat-demuxer join, `-c copy` for wav / `-c:a libmp3lame` for anything else | Binary `if fmt == "wav"` branch — the exact seam capability 3 extends |
+| `backend/app/config.py` | Frozen `Settings` dataclass from env vars, `_ALLOWED_OUTPUT_FORMATS = {"wav", "mp3"}` fail-fast at load time | Milestone drops wav, adds flac/opus — this set and its validation both need to change |
 
-**When to use:** Any time a resource-intensive, stateful model (loaded weights resident in VRAM) needs to serve a lightweight, frequently-restarted web layer. This is the dominant pattern across every real project surveyed (Qwen3-TTS-Openai-Fastapi-Rocm, TTS-Story's engine registry, tts-audiobook-tool's "standalone server component").
+## Capability 1 — Immediate Cancel
 
-**Trade-offs:** +Independent restart/scale, +GPU device flags scoped to one container (least privilege, cleaner Podman GPU passthrough), +backend stays GPU-free so local dev works without ROCm. −One more container to deploy/network; −adds one HTTP hop per segment (negligible vs. inference time, which is seconds).
+### The real mechanism, verified against the installed library (not speculative)
 
-**Example:**
+`backend/tts_service/model.py` calls `qwen_tts`'s `model.generate_custom_voice(text=..., speaker=..., instruct=...)`. Reading the installed wheel directly (`qwen_tts/inference/qwen3_tts_model.py`):
+
+- `generate_custom_voice(..., **kwargs)` forwards unrecognized kwargs through `self._merge_generate_kwargs(**kwargs)`, whose own `**kwargs` catch-all (`merged = dict(kwargs)`) passes straight into `self.model.generate(input_ids=..., ..., **gen_kwargs)`.
+- `self.model` is a `Qwen3TTSForConditionalGeneration`, a HuggingFace Transformers-family model — its `.generate()` supports the standard Transformers `stopping_criteria: StoppingCriteriaList` argument, checked once per decoding step (autoregressive, dozens-to-hundreds of steps/sec).
+
+**This means a custom `StoppingCriteria` is very likely already reachable through the existing public call, with no need to monkeypatch qwen_tts internals** — confirm with a short spike before committing to it as the mechanism, since this reads the library's kwarg-forwarding code path but was not exercised end-to-end against real GPU inference. Treat "the hook exists in the call chain" as HIGH confidence (verified from the wheel), and "it actually aborts a live ROCm decode loop promptly" as MEDIUM until proven live.
+
+### Recommended design (no task queue, reuses existing single-flight discipline)
+
+Because the backend's global `try_claim_generation`/`release_generation` lock already guarantees **at most one synth call in flight anywhere in the app**, `tts_service` never needs a per-request-id cancellation registry — a single process-wide `threading.Event` is sufficient (mirrors the existing `_active_generation_label` module-global pattern, just moved one process over):
+
 ```python
-# backend/app/services/tts_client.py
-import httpx
+# tts_service/model.py
+_cancel_event = threading.Event()
 
-class TTSClient:
-    def __init__(self, base_url: str, timeout: float = 120.0):
-        self._client = httpx.AsyncClient(base_url=base_url, timeout=timeout)
+class _CancelStoppingCriteria(StoppingCriteria):
+    def __call__(self, input_ids, scores, **kwargs) -> bool:
+        return _cancel_event.is_set()
 
-    async def synthesize(self, text: str, voice_instructions: str) -> bytes:
-        resp = await self._client.post(
-            "/synthesize",
-            json={"text": text, "voice_instructions": voice_instructions},
-        )
-        resp.raise_for_status()
-        return resp.content  # raw wav/mp3 bytes
+def synthesize_wav(text, speaker=None, instruct=None):
+    _cancel_event.clear()
+    ...
+    wavs, sr = model.generate_custom_voice(
+        ..., stopping_criteria=StoppingCriteriaList([_CancelStoppingCriteria()])
+    )
+    if _cancel_event.is_set():
+        raise GenerationCancelled()   # new exception type
+
+def request_cancel() -> None:
+    _cancel_event.set()
 ```
 
-### Pattern 2: Segment status as the job queue (state machine, no separate queue table)
-
-**What:** Each `Segment` row carries a `status` enum (`pending -> queued -> generating -> complete | error`, plus `stale` for post-edit). The single background worker polls/selects segments with `status = 'queued'` in order, marks them `generating`, calls the TTS client, writes the audio path, and marks `complete`. On backend startup, any segment left `generating` (from a crash mid-job) is reset to `queued` and resumed.
-
-**When to use:** Single-user, single-GPU, modest job volume (tens to low-thousands of segments per project). Avoids standing up Redis/Celery/ARQ purely to serialize access to one GPU.
-
-**Trade-offs:** +Zero extra infrastructure, +state is always consistent with what the UI needs to render (poll `GET /segments` and you have both "queue" and "progress" in one query), +durable across restarts since it's just SQLite rows. −Doesn't generalize to multi-worker/distributed processing if the project ever needs more than one GPU (acceptable given the fixed single-GPU deployment target).
-
-**Example:**
 ```python
-# backend/app/services/job_queue.py
-async def worker_loop(db, tts_client):
-    while True:
-        segment = db.get_next_queued_segment()  # ORDER BY order_index, status='queued' LIMIT 1
-        if segment is None:
-            await asyncio.sleep(1)
-            continue
-        db.update_status(segment.id, "generating")
-        try:
-            audio = await tts_client.synthesize(segment.text, segment.voice_instructions)
-            path = save_segment_audio(segment.project_id, segment.id, audio)
-            db.mark_complete(segment.id, audio_path=path)
-            await rejoin_project(segment.project_id)  # cheap ffmpeg concat, not full regen
-        except Exception as e:
-            db.mark_error(segment.id, str(e))
+# tts_service/server.py
+@app.post("/cancel")
+async def cancel() -> Response:
+    model_module.request_cancel()
+    return Response(status_code=202)
 ```
 
-### Pattern 3: LLM analysis as a chunk-and-reconcile pipeline, not a single call
+The key insight that avoids a client-side rewrite: **the fix is almost entirely server-side.** Today's `httpx.post(...)` + `run_in_threadpool` on the backend is fine as-is — it currently blocks for up to 300s only because `tts_service` itself doesn't return until the full segment finishes. Once `tts_service`'s own generate loop is made interruptible, the SAME blocking `httpx.post` naturally unblocks within one decoding step's latency (milliseconds) instead of the full segment. No async `httpx.AsyncClient` migration is needed on the backend side to get "immediate" — building that would solve a problem the server-side fix already removes. `(ponytail: this is the lazy read — verify it holds once the stopping-criteria plumbing is live; if httpx.post still hangs, the anyio-thread-cancellation gap is the fallback thing to fix, not before.)`
 
-**What:** For long texts (full novels can exceed even large LLM context windows), split the source into chapter- or size-bounded chunks, send each to the Grok API for cast detection + segmentation independently, then reconcile character identity across chunks (e.g., "Sarah" detected in chunk 1 and chunk 5 must resolve to the same `Character` row) before writing final `Segment` rows.
+### Backend-side plumbing needed
 
-**When to use:** Whenever input length is not bounded and could exceed model context in production use (this project explicitly targets full ebooks, not just short articles).
+- **Per-segment generate must become a background task** (it isn't one today — it's `await`ed synchronously in the request handler with no task handle). Refactor `POST /segments/{id}/generate` to match the exact pattern `_generate_preview`/character-preview already uses: `try_claim_generation` → spawn via `_spawn_claimed_generation` → return 202 → client polls/streams status. Add a new `dict[segment_id, Task]` registry in `generation_worker.py` (same shape as `_running_generations`, keyed by segment instead of project) so a `POST /segments/{id}/generate/cancel` has something to `.cancel()`.
+- **`tts_client.py` gains a `cancel()` function** that POSTs to `{TTS_SERVICE_URL}/cancel` — called by both the batch cancel endpoint and the new per-segment cancel endpoint. Fire-and-forget is fine (best-effort; a 5xx/timeout on the cancel call itself should still let the caller proceed to release the lock).
+- **`cancel_generation` (batch) and the new per-segment cancel** both: (1) POST to `tts_service`'s `/cancel`, (2) `task.cancel()` the local asyncio task, (3) reset the affected segment(s) to `"pending"`. Order matters less than "both happen" — the `/cancel` call is what actually shortens the in-flight synth; the asyncio `.cancel()` is what stops progression to the next segment (existing behavior, keep it).
 
-**Trade-offs:** +Handles arbitrarily long books, +keeps each LLM call fast and cheap. −Adds real complexity (name/identity matching across chunks is a genuine open problem, not just plumbing) — flag this for deeper research or a simpler v1 heuristic (e.g., match by exact name string, let user merge duplicates manually in the cast wizard).
+### What NOT to build for this
 
-## Data Flow
+- **No subprocess-per-request kill.** Forking/spawning a fresh process per synth call to get SIGKILL-ability would mean either re-loading the model per call (the documented anti-pattern already called out in `model.py`) or forking after a CUDA/ROCm context is already initialized in the parent, which is a well-known broken pattern for GPU frameworks (`"Cannot re-initialize CUDA in forked subprocess"`-class failures). Skip it.
+- **No task queue / Celery / Redis.** CLAUDE.md already rules this out and nothing here needs it — the single `threading.Event` plus the existing global lock is the entire mechanism.
+- **No per-request cancellation token/id.** The app-wide single-flight lock already means "at most one thing is generating," so a single global cancel flag in `tts_service` is correct, not a simplification that will bite later.
 
-### Request Flow (end-to-end pipeline)
+## Capability 2 — On-Demand Model Swap (1.7B / 0.6B)
 
-```
-[Upload .txt/.epub]
-    ↓
-[Backend: parse → plain text + chapters] → Project(status=uploaded)
-    ↓
-[Backend: chunk text → xAI Grok API] → cast + segments (JSON)
-    ↓
-[Backend: reconcile characters, write rows] → Project(status=analyzed)
-    ↓                                          Character[], Segment[](status=pending)
-[User: cast wizard + table edits]  ←───────────────┐
-    ↓ (PATCH /characters, /segments)                │ live edits, no regen triggered
-[User: clicks Generate]                             │ unless segment already had audio
-    ↓                                                │ (→ marks status=stale)
-[Backend: mark segments queued] → Job Queue
-    ↓ (single worker, sequential)
-[Worker: POST TTS service /synthesize] → audio bytes
-    ↓
-[Backend: write segment audio file] → Segment(status=complete, audio_path)
-    ↓ (after each segment, and always at explicit "join")
-[Backend: ffmpeg concat all complete segments in order] → Project.output_path
-    ↓
-[UI: poll/SSE progress reflects each row's status + overall %]
-```
+### Where model choice should live: per-project DB column, not a request param or pure global
 
-### Regenerate-single-segment flow
+Two facts pull in the same direction here:
 
-```
-[User edits row text/voice_instructions after audio exists]
-    ↓
-PATCH /segments/{id} → Segment(status=stale)
-    ↓ (explicit "regenerate" action, or auto-enqueue on edit — product decision)
-Segment(status=queued) → Job Queue picks it up (same worker, same path as initial gen)
-    ↓
-[Worker regenerates ONLY this segment]
-    ↓
-[Backend: cheap ffmpeg re-concat of the full ordered list] → Project.output_path updated
-```
+1. **Physical constraint:** one GPU, one resident model at a time ("only one resident in VRAM at a time" per the milestone). This is inherently a `tts_service`-process-global runtime fact, not something that can vary per-request without a reload.
+2. **Correctness constraint, already designed for:** `cache_key.py`'s `TTS_MODEL_VERSION` is documented as part of the cache tuple `(character, voice instructions, text, voice/model version)` — currently a hardcoded constant because "only one model is in scope for v1." A project generated on the 1.7B model and later switched to 0.6B must NOT silently serve stale 1.7B-cached audio as if it matches — the cache key needs the ACTUAL model used to vary per project.
 
-This is the same code path as initial generation — "regenerate one segment" is not a special case, it's just enqueuing a single segment ID instead of all of them. This is the key design insight: **don't build a separate "regenerate" pipeline; build one queue-a-segment primitive and call it from both "generate all" and "regenerate this row."**
+Resolve both by splitting the concern:
 
-### Data Model
+- **`Project.tts_model: str`** (new SQLModel column, default = today's hardcoded model id) — source of truth for "what this project wants," edited via the Config Panel, and fed into `compute_cache_key(resolved_speaker, voice_instructions, text, model_id)` (drop the hardcoded `TTS_MODEL_VERSION` constant, thread the real value through instead — a straightforward signature change, not a redesign).
+- **A single global "currently resident model" fact inside `tts_service`** — physical reality, reconciled opportunistically against whatever `Project.tts_model` says right before synthesis, not duplicated as separate state on the backend side.
 
-```
-Project
-  id, name, created_at, updated_at
-  source_filename, source_text_path
-  status: uploaded | analyzing | analyzed | generating | complete | error
-  llm_model, output_format (mp3|wav), output_path
+This gives correct caching (per-project intent recorded) without pretending two models can be resident simultaneously (they can't, and nothing here tries to fake it).
 
-Character
-  id, project_id (FK)
-  name, description (age/personality/gender, LLM-inferred)
-  voice_type: preset | instructions
-  preset_voice_id (nullable), voice_instructions (nullable)
-  display_order
+### Integration points
 
-Segment
-  id, project_id (FK), order_index
-  character_id (FK, nullable until assigned)
-  text, voice_instructions (per-segment override of character default)
-  status: pending | queued | generating | complete | error | stale
-  audio_path (nullable), duration_ms (nullable), error_message (nullable)
-  updated_at
-```
+- **`tts_service/model.py`**: replace the module-level `model = Qwen3TTSModel.from_pretrained(MODEL_NAME, ...)` singleton with a tiny load/unload function:
+  ```python
+  _loaded_model_id: str | None = None
+  _model = None
 
-No separate `Job` table is needed — `Segment.status` + `order_index` IS the queue. If job history/audit becomes a real requirement later, add a lightweight append-only `JobLog` table, but don't build it preemptively.
+  def ensure_loaded(model_id: str) -> None:
+      global _loaded_model_id, _model
+      if _loaded_model_id == model_id:
+          return
+      if _model is not None:
+          del _model
+          gc.collect()
+          torch.cuda.empty_cache()   # ROCm build aliases cuda->hip; same call as today
+      _model = Qwen3TTSModel.from_pretrained(model_id, device_map="cuda:0",
+                                              dtype=torch.bfloat16, attn_implementation="sdpa")
+      _loaded_model_id = model_id
+  ```
+  `torch.cuda.empty_cache()` under the ROCm build already in use (`gfx1201`) is the same call as CUDA — no new API surface; this project already calls `device_map="cuda:0"`/`dtype=torch.bfloat16` today on an AMD GPU, so the CUDA-namespace-aliases-to-HIP fact is already relied upon, not a new assumption.
+- **`POST /synthesize` gains an optional `model_id` field.** Simplest shape: `tts_service` self-manages — on a request naming a `model_id` that differs from what's resident, it calls `ensure_loaded(model_id)` first, THEN synthesizes, all within the one existing HTTP call. This avoids a second round trip and avoids the backend needing to track `tts_service`'s resident-model state itself (one source of truth, in the process that actually owns the GPU memory).
+- **But the milestone explicitly wants an *explicit* "load-on-demand" UX**, not a silent first-request penalty — so also expose a **dedicated `POST /model/{model_id}/load`** endpoint on `tts_service`, and a matching backend endpoint (e.g. `POST /projects/{id}/model`) the Config Panel calls directly when the user picks a model from the dropdown, ahead of hitting Generate. `/synthesize`'s own implicit-load-if-needed stays as a safety net (handles "user forgot to preload"), the explicit endpoint is what gives the UI something to show a spinner against.
+- **Route the swap call through the existing lock, don't add a new one.** Treat "load model" as just another claimant of `try_claim_generation("model-load:{model_id}")` in `generation_worker.py` — it already prevents any two generation-triggering actions (preview / segment / batch / now model-load) from racing, with zero new locking primitives. Direct reuse of an existing pattern, not a new mechanism.
+- **Latency is real but bounded and already within the existing timeout budget.** `tts_service/model.py`'s own comment says "this can take 1-2 minutes on first run" — but that's the one-time Hugging Face *download*; the volume `qwen-ebook-tts-hf-cache` already persists downloaded weights across restarts, so a swap between two already-downloaded checkpoints is a disk→VRAM load (materially faster — commonly tens of seconds for models this size, not minutes). This fits inside the 300s `httpx` read timeout already used for `/synthesize` — **a plain blocking request/await, no SSE, no background task, is the lazy-correct answer here** unless real-hardware timing during the build phase proves otherwise; don't build SSE progress for this preemptively.
+- **`get_supported_speakers()` may differ between checkpoints — do not assume the preset list is identical across 1.7B and 0.6B.** This is a genuine open question flagged for a phase-specific spike (verify once the 0.6B checkpoint is actually downloaded), not something to hardcode an assumption about here. Also note: the wheel's own code shows `if self.model.tts_model_size in "0b6": instruct = None` — **the 0.6B checkpoint silently drops `instruct` steering entirely.** This is a real, verified behavioral difference the Config Panel/UX should surface (switching to 0.6B changes what the voice-instruction field even does), not just a VRAM/speed tradeoff.
 
-### Key Data Flows
+### Build-order interaction with Capability 1
 
-1. **Analysis flow (LLM-bound, cloud):** Source text → chunked outbound HTTPS calls to xAI → structured JSON → Character/Segment rows. One-time per project (re-run only if user explicitly requests re-analysis).
-2. **Generation flow (GPU-bound, local, sequential):** Segment(queued) → TTS service HTTP call → audio file → Segment(complete) → cheap rejoin. Repeats per segment, strictly one at a time given single GPU.
-3. **Progress flow (read-only):** Frontend polls `GET /projects/{id}/segments` (or subscribes to SSE) → renders per-row status badges + aggregate progress bar from count(complete)/count(total).
+Both capabilities modify `tts_service/server.py`'s request-handling shape and both need the same "GPU has exactly one thing happening at a time" discipline. They are not strictly sequential — cancel only touches `/synthesize`; model-swap adds a new `/model/{id}/load` endpoint — but they're cheapest to design in the same pass: introduce one small `_engine_state` module in `tts_service` (currently-loaded model id + the cancellation `threading.Event`) that both endpoints read/write, instead of two independent globals bolted on separately. See Build Order below for why cancel should still land first in sequence despite this shared-file overlap.
 
-## Scaling Considerations
+## Capability 3 — FLAC/Opus in the ffmpeg Join
 
-This is a single-user, single-GPU, personal tool — "scale" here means **text length / segment count per project**, not concurrent users.
+Fully independent of capabilities 1 and 2 — touches only `audio_join.py` and `config.py`, no shared code path with the TTS boundary at all.
 
-| Scale | Architecture Adjustments |
-|-------|---------------------------|
-| Short text (article, few chapters, <100 segments) | Everything as described works with no changes; single LLM call may suffice without chunking |
-| Full novel (1,000s of segments) | LLM analysis MUST chunk + reconcile (Pattern 3); ffmpeg join MUST use concat demuxer with a file list, not `filter_complex` (which does not scale past dozens of inputs); SQLite handles thousands of rows trivially, no changes needed there |
-| Very long generation runs (hours of sequential TTS) | Job queue must survive backend restarts (resume `generating`→`queued` on startup) and the UI must tolerate long-lived progress polling/SSE connections; consider a lightweight ETA estimate (rolling average of prior segment durations) for the sidebar |
+- `audio_join.py`'s `if fmt == "wav": codec_args = ["-c", "copy"] else: ["-c:a", "libmp3lame"]` becomes a small dict/dispatch: `{"flac": ["-c:a", "flac"], "opus": ["-c:a", "libopus"], "mp3": ["-c:a", "libmp3lame"]}` — a lookup, not a new abstraction (no need for a codec strategy class for 3 fixed options).
+- `config.py`'s `_ALLOWED_OUTPUT_FORMATS = {"wav", "mp3"}` → `{"flac", "mp3", "opus"}` (milestone: "WAV dropped"). The existing fail-fast-at-settings-load-time pattern already does the right thing here — just update the set.
+- **Verify `libopus`/`flac` are present in the backend container's ffmpeg build** (`backend/Containerfile.backend`) before relying on this — most distro ffmpeg builds include both by default, but this container is minimal/CPU-only by design. One `ffmpeg -codecs | grep -E 'opus|flac'` check inside the built image closes this out; don't assume.
+- Response `media_type` in `main.py`'s serving paths needs a matching lookup too (`audio/flac`, and Opus is typically muxed into an Ogg or WebM container by ffmpeg's default muxer when the output extension is `.opus` — confirm the extension-to-mimetype pairing during implementation; it's a one-line lookup, not a design decision).
 
-### Scaling Priorities
+## Capability 4 — Download Endpoint + Filename
 
-1. **First bottleneck:** LLM context window on full-book analysis — solved by chunking + reconciliation (Pattern 3), which should be assumed necessary from day one given this project's explicit ebook use case, not treated as a later optimization.
-2. **Second bottleneck:** GPU inference throughput for very long books (sequential, one segment at a time, could take a long time for a full novel) — not really "solvable" further given the single-GPU constraint; the honest scaling answer is to set correct user expectations (background/batch processing, not real-time) rather than add parallelism that a single GPU can't actually exploit (see below).
+Also independent of capabilities 1 and 2. Loosely coupled to capability 3 (the download response's filename/Content-Type needs to know the final codec, which only becomes variable once 3 lands) but no hard build-order dependency — could be built in either order or in parallel.
 
-## Anti-Patterns
-
-### Anti-Pattern 1: Running the TTS model in-process inside the web backend
-
-**What people do:** Load the Qwen TTS model directly in the FastAPI process that also serves the web UI, to "keep it simple" and avoid a second container.
-
-**Why it's wrong:** Couples GPU device passthrough to the entire web stack (violates least-privilege in Podman), makes every backend restart (including trivial code changes during development) reload a multi-GB model into VRAM, blocks the event loop / competes for resources with request handling, and makes local development impossible without ROCm+GPU present (violates this project's own constraint that GPU-dependent behavior must be mockable in dev).
-
-**Do this instead:** Separate container, HTTP boundary (Pattern 1). Mock the `TTSClient` in dev/tests.
-
-### Anti-Pattern 2: Full pipeline regeneration on every edit
-
-**What people do:** Any edit to a row's text or voice instructions triggers regenerating the entire audiobook from scratch.
-
-**Why it's wrong:** Wastes GPU time (minutes to hours for a full book) for a one-line tweak, directly contradicts the explicit requirement that edits regenerate only the affected segment, and makes iteration on voice instructions painfully slow.
-
-**Do this instead:** Segment-level status machine (Pattern 2) — mark only the edited segment `stale`/`queued`, regenerate it alone, then do a cheap ffmpeg re-concat (not re-encode) of the full ordered list.
-
-### Anti-Pattern 3: Parallelizing TTS requests against a single GPU without a concurrency cap
-
-**What people do:** Fire off multiple segment-generation HTTP requests concurrently to "speed things up," assuming the TTS service will handle them in parallel.
-
-**Why it's wrong:** A single 16GB-VRAM GPU running one resident model instance does not meaningfully parallelize compute-bound inference — concurrent requests either serialize at the driver level anyway (no throughput gain) or risk VRAM contention/OOM if the inference library naively tries to hold multiple concurrent generation states. This matches what real self-hosted TTS servers do: bound concurrency to 1 (the `TTS_MAX_CONCURRENT`-style pattern seen in production Qwen3-TTS ROCm servers). [MEDIUM confidence — general GPU-serialization principle is well-established; the exact behavior of the specific Qwen TTS model under concurrent load was not independently benchmarked and should be spot-checked during implementation.]
-
-**Do this instead:** Single worker, sequential queue (Pattern 2). If throughput ever truly matters, the correct lever is a faster/smaller model or a second GPU — not client-side concurrency against one device.
-
-### Anti-Pattern 4: Storing generated audio as BLOBs in SQLite
-
-**What people do:** Store per-segment WAV/MP3 data directly in the database for "consistency."
-
-**Why it's wrong:** Bloats the DB file, makes backups/inspection painful, complicates streaming audio to the browser (files are natively servable via static file routes; BLOBs require an extra read-and-stream layer), and provides no real benefit at single-user scale.
-
-**Do this instead:** Filesystem storage (`data/projects/{id}/segments/{segment_id}.wav`), DB stores only the path.
-
-## Integration Points
-
-### External Services
-
-| Service | Integration Pattern | Notes |
-|---------|----------------------|-------|
-| xAI Grok API | Outbound HTTPS from backend, structured/JSON-mode completion request per text chunk | Requires retry/backoff for rate limits; chunk long books (Pattern 3); no local infra needed |
-| Qwen TTS service | Internal HTTP call from backend to TTS container over the Podman network (e.g., `http://tts-service:8000/synthesize`) | Single endpoint, one request per segment, bounded concurrency; treat as a local "cloud-like" API even though it's on the same host |
-
-### Internal Boundaries
-
-| Boundary | Communication | Notes |
-|----------|----------------|-------|
-| Frontend ↔ Backend | REST (CRUD) + SSE or polling for progress | Progress can start as simple polling (`GET /segments` every 1-2s) for MVP; upgrade to SSE only if polling proves too chatty/laggy — don't over-engineer this early |
-| Backend ↔ TTS service | Synchronous HTTP request per segment, backend-managed sequencing | Backend owns the queue and sequencing; TTS service itself should also cap its own internal concurrency to 1 as a second line of defense against accidental parallel calls |
-| Backend ↔ Persistence | Direct SQLite access (ORM) + direct filesystem read/write within the process | No abstraction layer needed at this scale; keep it simple |
-| Backend ↔ ffmpeg | Subprocess invocation, not a network service | Concat demuxer for joining (fast, no re-encode of already-correct-format segments); explicit encode step only needed if TTS output format differs from desired output format |
-
-## Podman / GPU Passthrough Specifics
-
-- Confirmed pattern (official Podman/AMD docs): `podman run --device /dev/kfd --device /dev/dri ...` grants ROCm compute access; rootless Podman additionally requires the invoking user to be in the `video`/`render` groups and `--group-add keep-groups` to propagate them into the container. [HIGH confidence, Red Hat + AMD official docs]
-- Alternative: Container Device Interface (CDI) via `--device amd.com/gpu=<entry>`, AMD's newer/preferred mechanism for structured device injection. [MEDIUM confidence — confirmed to exist, not verified as the more mature path for this specific hardware yet]
-- These device flags should be applied **only to the `tts-service` container**, never to the backend container — this is the concrete Podman-level enforcement of the "TTS as separate GPU-scoped service" pattern (Pattern 1).
-- RX 9070 XT (RDNA4, LLVM target `gfx1201`) has official ROCm 7.x support as of current AMD documentation — this is a relatively recent addition, so pin a ROCm version known to support `gfx1201` explicitly in the TTS service's base image rather than floating on `latest`. [HIGH confidence per AMD's own system requirements page, but flag for a version-pinning check during setup since RDNA4 support is newer than most existing ROCm container tutorials/examples online, which mostly target older CDNA/RDNA2-3 cards]
-- Local dev machine (non-GPU per project context) cannot run the TTS container's real inference path — the `TTSClient` HTTP boundary is also what makes a mock/stub TTS service (returning silent placeholder audio) trivial to swap in for local development, satisfying the project's "GPU-dependent behavior should degrade gracefully or be mockable" constraint.
+- **`Project.output_filename: str | None`** (new SQLModel column) — set via the Config Panel before generation starts, alongside the existing `output_format` field this milestone is already reworking into a per-project setting (today `output_format` is a fixed global `settings.OUTPUT_FORMAT`, serialized read-only in `_serialize_project`; this milestone's Config Panel work already implies promoting BOTH format and filename from global settings to per-project DB columns/PATCH-able fields — do this as one combined schema change, not two).
+- **New `GET /projects/{id}/download`** endpoint in `main.py`, sibling to the existing `GET /segments/{id}/audio.wav` / `GET /characters/{id}/preview.wav` pattern already established — reads `Project.output_path`, serves it with `Content-Disposition: attachment; filename="{output_filename}.{output_format}"` and the format-appropriate `media_type` (same lookup table as capability 3's mimetype concern). Reuse `fastapi.responses.FileResponse` (already a FastAPI dependency) rather than reading bytes into memory the way the WAV preview endpoints do today — those are fine for short preview clips but a full joined audiobook file shouldn't be buffered fully into a `Response(content=...)` the way `get_segment_audio` does.
+- **Filename validation**: same discipline as everywhere else in this codebase (server-generated ids for actual file paths, user input never used as a raw path component) — the user-supplied filename is ONLY the download's `Content-Disposition` display name, never the actual on-disk path (`out_path` stays a `uuid4().hex`-based server path, exactly as today). Sanitize only enough to keep it a safe header value (strip path separators/control characters) — no need for a full filename-sanitization library for a single-user tool serving its own generated file back to itself.
 
 ## Suggested Build Order
 
-1. **Data model + persistence** (Project/Character/Segment schema, SQLite, project CRUD API) — foundation everything else depends on.
-2. **File upload + parsing** (.txt and .epub → plain text/chapters) — no GPU or LLM dependency, fully testable standalone.
-3. **Frontend table + sidebar shell against mocked/fixture segment data** — can start immediately once the API contract (Segment/Character JSON shape) is defined in step 1; does NOT need real LLM or TTS to exist. This decouples UI iteration from the riskiest backend pieces.
-4. **TTS service standalone spike** (separate track, can start in parallel with 1-3) — stand up the ROCm container, confirm Qwen TTS loads and serves a synthesis request on the actual RX 9070 XT hardware via Podman GPU passthrough. This is the highest-risk, most environment-specific component (newest-generation GPU + ROCm + Podman + rootless device passthrough all stacked); de-risk it early even though nothing else strictly blocks on it yet.
-5. **LLM analysis integration** (xAI Grok call, JSON parsing, chunk+reconcile for long texts) — depends on 1-2; testable independently of TTS entirely, produces real Segment/Character data the frontend can render.
-6. **Wire frontend to real backend** (cast wizard + editable table against real analysis output) — depends on 3 + 5.
-7. **Job queue + backend-to-TTS integration** (single async worker, sequential HTTP calls to TTS service, status transitions) — depends on 5 (segments exist to generate) and 4 (TTS service exists to call).
-8. **Audio joining** (ffmpeg concat) — depends on 7 producing segment files; can be developed/tested earlier against dummy silent audio files if useful to decouple from real TTS timing.
-9. **Regenerate-single-segment + auto-rejoin** — mostly wiring on top of 7+8 (same queue-a-segment primitive, see Data Flow section); low incremental risk once 7+8 exist.
-10. **Live progress UI** (polling first, SSE later if needed) — depends on 7 (there must be real status transitions to observe); start simple.
-11. **Podman deployment** (compose/Quadlet files, GPU device scoping, Tailscale serving) — can be scaffolded early as a skeleton (empty services wired together) and filled in incrementally as each service solidifies; final integration/validation pass once 1-10 work locally.
+1. **Immediate-cancel (Capability 1) first.** It's the one genuine technical unknown here (does `stopping_criteria` actually abort a live ROCm decode loop the way it does on the HF reference CUDA path — verified as reachable in the library's Python call chain, NOT yet verified against real GPU inference). It's also the most architecturally invasive change (per-segment generate has to become a background task with a cancel registry, `tts_service` gains its first piece of shared mutable state). Landing it first de-risks the milestone's hardest question early and gives capability 2 an `_engine_state` scaffold to extend rather than build from scratch.
+2. **Model swap (Capability 2) second**, extending the same `tts_service` engine-state module. Mechanically well-understood (load/unload is a standard PyTorch pattern already half-implemented in this codebase's model-loading code) — the open questions here (speaker-list parity across checkpoints, instruct-drop on 0.6B, real swap latency) are spike-and-verify items, not architecture risk.
+3 & 4. **FLAC/Opus (3) and filename/download (4)** — fully decoupled from 1 and 2 (no shared code with the TTS HTTP boundary), and mostly decoupled from each other. Sequence them last since they're additive/mechanical and lower-risk; do 3 before 4 only because the download endpoint's Content-Type/extension logic is more naturally written once the codec set it needs to handle is final, not because of any hard technical dependency. Could ship in the same phase as one Config Panel change (both extend `Project` with new per-project settings columns in one migration pass).
 
-**Key build-order insight:** the frontend table/sidebar and the TTS-on-ROCm spike are the two things that can and should start in parallel with the "main line" (data model → parsing → LLM → queue → join), because they have no dependency on each other and one of them (the GPU spike) carries the most environment/hardware risk in the whole project.
+**Cross-cutting frontend note:** capability 1's backend change flips per-segment generate from a synchronous `200 {segment}` response to an asynchronous `202` + poll/SSE contract (matching the existing character-preview and batch patterns). Any frontend work on the per-row generate/stop button (`SegmentTable.tsx`/`SegmentPreview.tsx`) should land AFTER that backend contract change, not against today's synchronous shape — building UI against the soon-to-change synchronous contract is wasted work.
+
+## Anti-Patterns to Avoid
+
+### Anti-Pattern: Reaching for a task queue to solve cancellation
+**What people do:** see "need to cancel a long-running background job" and reach for Celery/RQ/arq with a broker.
+**Why it's wrong:** this app has exactly one GPU, one resident model, and an existing single-flight lock that already serializes all generation app-wide. A task queue adds a broker process, serialization, and a whole new failure mode for a problem that a `threading.Event` plus a `StoppingCriteria` check solves in-process. CLAUDE.md already rules this out explicitly.
+**Do this instead:** the `_cancel_event` + `stopping_criteria` design above, gated by the lock that already exists.
+
+### Anti-Pattern: Rewriting the backend's HTTP client to async to "fix" cancellation
+**What people do:** see that `run_in_threadpool` can't be cancelled mid-flight and conclude the client needs an async `httpx.AsyncClient` with connection-level cancellation.
+**Why it's wrong:** the actual bottleneck is server-side (`tts_service` doesn't return until the whole segment finishes) — fixing that makes the existing blocking client return promptly on its own, no client rewrite needed. An async client migration would be solving the same UX symptom with strictly more moving parts.
+**Do this instead:** make `tts_service`'s generate loop interruptible; leave the existing sync `httpx.post` + `run_in_threadpool` client as-is.
+
+### Anti-Pattern: Treating model choice as purely global config
+**What people do:** since only one model can be resident at a time, put the choice in `Settings`/env vars like `OUTPUT_FORMAT` is today.
+**Why it's wrong:** this breaks the content-hash cache's correctness contract — a project generated under 1.7B and later regenerated under a globally-flipped-to-0.6B setting needs its cache to bust, and that requires the model identity to be recorded per-project, not read from ambient global state at generate time.
+**Do this instead:** `Project.tts_model` column feeding `compute_cache_key`, reconciled against `tts_service`'s single physically-resident model at generate time.
+
+## Integration Points Summary
+
+| Boundary | Communication | New in this milestone |
+|----------|---------------|------------------------|
+| Frontend ↔ backend, per-segment generate | REST, currently sync `200` | Becomes async `202` + poll/SSE (Cap 1) |
+| Frontend ↔ backend, batch cancel | REST `POST /projects/{id}/generate/cancel` (exists) | Extended to also call tts_service `/cancel` (Cap 1) |
+| Frontend ↔ backend, per-segment cancel | Does not exist today | New `POST /segments/{id}/generate/cancel` (Cap 1) |
+| Frontend ↔ backend, model select | Does not exist today (fixed display value) | New `POST /projects/{id}/model` (Cap 2) |
+| Backend ↔ tts_service, synth | HTTP `POST /synthesize` (exists) | Gains optional `model_id`; server-side interrupt via stopping_criteria (Cap 1+2) |
+| Backend ↔ tts_service, cancel | Does not exist today | New `POST /cancel`, global `threading.Event` (Cap 1) |
+| Backend ↔ tts_service, model load | Does not exist today | New `POST /model/{model_id}/load` (Cap 2) |
+| Backend ↔ ffmpeg | `subprocess.run`, 2-way branch (exists) | 3-way codec dispatch table (Cap 3) |
+| Frontend ↔ backend, download | Does not exist today | New `GET /projects/{id}/download`, `FileResponse` (Cap 4) |
 
 ## Sources
 
-- [How to configure AMD GPU for using in Podman containers on RHEL9 — Red Hat Customer Portal](https://access.redhat.com/solutions/7073764) — HIGH confidence, official
-- [How to Use GPU Passthrough with Podman](https://oneuptime.com/blog/post/2026-03-18-use-gpu-passthrough-podman/view) — MEDIUM confidence
-- [How to Use ROCm in Podman Containers](https://oneuptime.com/blog/post/2026-03-18-use-rocm-podman-containers/view) — MEDIUM confidence
-- [AMD Container Runtime Toolkit — Running Workloads](https://instinct.docs.amd.com/projects/container-toolkit/en/latest/container-runtime/running-workloads.html) — HIGH confidence, official AMD docs
-- [GitHub — antonsokolskyy/Qwen3-TTS-Openai-Fastapi-Rocm](https://github.com/antonsokolskyy/Qwen3-TTS-Openai-Fastapi-Rocm) — MEDIUM-HIGH confidence, direct real-world reference implementation for this exact stack (Qwen3-TTS + FastAPI + ROCm)
-- [GitHub — groxaxo/Qwen3-TTS-Openai-Fastapi](https://github.com/groxaxo/Qwen3-TTS-Openai-Fastapi) — MEDIUM confidence, corroborates OpenAI-compatible server pattern and `TTS_MAX_CONCURRENT` concurrency bounding
-- [GitHub — Xerophayze/TTS-Story](https://github.com/Xerophayze/TTS-Story) — MEDIUM-HIGH confidence, near-identical project shape (multi-voice TTS studio, chunk review/regeneration, job queue, local GPU + Qwen3-TTS backend) — strongest real-world corroboration of the overall architecture
-- [GitHub — psdwizzard/chatterbox-Audiobook](https://github.com/psdwizzard/chatterbox-Audiobook) — MEDIUM confidence, corroborates queue + individual-chunk-regeneration pattern
-- [GitHub — zeropointnine/tts-audiobook-tool](https://github.com/zeropointnine/tts-audiobook-tool) — MEDIUM confidence, corroborates standalone TTS server component pattern
-- [GitHub — aedocw/epub2tts](https://github.com/aedocw/epub2tts) — LOW-MEDIUM confidence, corroborates EPUB parsing as a distinct pipeline stage
-- [ROCm system requirements (Linux) — AMD ROCm Documentation](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/reference/system-requirements.html) — HIGH confidence, official; confirms RX 9070 XT / gfx1201 official support
-- [ROCm compatibility matrix — AMD](https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html) — HIGH confidence, official
-- [Managing Background Tasks in FastAPI: BackgroundTasks vs ARQ + Redis](https://davidmuraya.com/blog/fastapi-background-tasks-arq-vs-built-in/) — MEDIUM confidence, informed the decision to avoid Redis/Celery given single-user/single-GPU scale
-- [What is everyone using for scheduled background jobs and queued tasks? (not celery) — fastapi/full-stack-fastapi-template Discussion #2059](https://github.com/fastapi/full-stack-fastapi-template/discussions/2059) — LOW-MEDIUM confidence, community discussion corroborating SQLite-backed lightweight queue viability for single-node deployments
+- `backend/app/tts_client.py`, `backend/tts_service/server.py`, `backend/tts_service/model.py` — call boundary, verified by direct read.
+- `deploy/qwen-ebook-tts.container`, `deploy/qwen-ebook-backend.container` — container topology, verified by direct read.
+- `backend/app/main.py` (`cancel_generation`, `regenerate_segment`, `generate_segment`), `backend/app/generation_worker.py` (`try_claim_generation`/`_running_generations`) — current cancel/lock semantics, verified by direct read, including the codebase's own documented ceiling on today's cancel behavior.
+- `backend/app/cache_key.py`, `backend/app/audio_join.py`, `backend/app/config.py`, `backend/app/models.py` — current seams for model-version, codec, and per-project schema, verified by direct read.
+- Installed `qwen_tts` wheel, `qwen_tts/inference/qwen3_tts_model.py` (`generate_custom_voice`, `_merge_generate_kwargs`) — verified directly from the container image's installed package (not from PyPI docs or memory): confirms `**kwargs` (including a HF-standard `stopping_criteria`) flow through to the underlying `Qwen3TTSForConditionalGeneration.generate()` call, and confirms the 0.6B checkpoint (`tts_model_size in "0b6"`) silently drops `instruct` steering — a real, load-bearing behavioral difference between the two checkpoints this milestone must account for.
+- `frontend/src/components/ConfigPanel.tsx`, `frontend/src/hooks/useGenerationLock.ts` — current frontend contract with the generation lock/cancel endpoints, verified by direct read, confirming the documented cancel limitation is already user-visible copy today.
 
 ---
-*Architecture research for: self-hosted ebook-to-audiobook narration app (LLM analysis + local multi-voice TTS + audio joining)*
-*Researched: 2026-07-09*
+*Architecture research for: Qwen Ebook Narrator v1.1 milestone (generation-control + config-panel integration)*
+*Researched: 2026-07-13*

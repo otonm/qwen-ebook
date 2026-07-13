@@ -1,170 +1,160 @@
 # Project Research Summary
 
-**Project:** Qwen Ebook Narrator
-**Domain:** Self-hosted ebook-to-audiobook narration web app (LLM text analysis + local multi-voice TTS + spreadsheet-style review UI)
-**Researched:** 2026-07-09
-**Confidence:** MEDIUM-HIGH
+**Project:** Qwen Ebook Narrator — v1.1 milestone (Generation UX & Config Rework)
+**Domain:** Self-hosted ebook-to-audiobook narration web app; v1.1 scope is generation-control UX (immediate cancel, unified generate/stop/play button) plus a config panel rework (dual TTS model swap, FLAC/Opus output, editable filename/download)
+**Researched:** 2026-07-13
+**Confidence:** HIGH — this milestone's research is grounded directly in the existing codebase (verified by reading the installed `qwen-tts==0.1.1` wheel, `tts_service`, `generation_worker.py`, `audio_join.py`, frontend components) rather than greenfield domain survey. v1.0 stack/features research (still largely applicable) was MEDIUM-HIGH.
 
 ## Executive Summary
 
-This is a personal, single-user tool that sits in a well-established (if niche) domain: LLM-driven cast detection + per-segment voice assignment + multi-voice TTS + audio join, matched closely by real open-source projects (VoxNovel, TTS-Story, audiobook-creator) and commercial tools (ElevenLabs, Play.ht). The research strongly validates the app's existing design: a FastAPI + SQLite/filesystem backend, a React/Vite + TanStack Table spreadsheet-style editable UI, xAI Grok for structured cast/segment extraction, and self-hosted Qwen3-TTS-1.7B-CustomVoice for synthesis. The single most load-bearing architectural decision, confirmed independently by both Features and Architecture research, is per-segment status plus content-hash tracking: persisting individual segment audio files keyed by a hash of (character, voice instructions, text, model/voice version), with Segment.status doubling as the job queue. This one data-model choice simultaneously satisfies "regenerate only the edited row," "resume an interrupted generation run," and "cheap rejoin" and should be designed in from day one, not retrofitted.
+v1.1 is not new-feature work in the greenfield sense — it is a targeted hardening and UX-unification pass on an already-shipped pipeline. The milestone has four capabilities: (1) truly immediate cancellation of an in-flight Qwen3-TTS `generate()` call, (2) on-demand swap between the 1.7B and 0.6B CustomVoice checkpoints within the 16GB VRAM budget, (3) FLAC/Opus output added (WAV dropped) in the ffmpeg join step, and (4) an editable output filename with a dedicated download endpoint — all wrapped in a unified 3-state (yellow/red/green) generate/stop/play button replacing today's separate status-badge column and four independently hand-rolled button implementations.
 
-The recommended approach: run TTS as a separate, GPU-scoped Podman container behind a plain HTTP endpoint (never in-process with the web backend), keep GPU concurrency at 1 (single 16GB card, no meaningful parallel throughput gain), use a single in-process asyncio worker against a SQLite-backed queue (no Redis/Celery, total overkill at this scale), and chunk long-novel LLM analysis on structural boundaries (chapter/paragraph, not raw token counts) while always re-supplying the running cast list as context to prevent duplicate/renamed characters across chunks. Frontend and the TTS-on-ROCm spike can be built in parallel tracks from day one since neither blocks the other, and the GPU spike carries the most environment-specific risk in the whole project.
+The recommended approach reuses existing architecture almost entirely rather than introducing new infrastructure: no task queue, no WebSockets, no new abstractions. Cancellation is solved with a `threading.Event` + a monkeypatched/injected `StoppingCriteria` on the TTS process's inner `talker.generate()` call (verified necessary by reading the installed `qwen-tts` wheel — the outer `generate_custom_voice()` wrapper silently drops `stopping_criteria` kwargs), combined with converting per-segment/per-character generation from synchronous request/response into the same addressable-background-task pattern batch generation already uses. Model swap reuses the standard PyTorch `del` + `gc.collect()` + `torch.cuda.empty_cache()` pattern, gated by the existing single-flight generation lock, with the live model id threaded into the content-hash cache key (today hardcoded) to prevent silent stale-model cache hits. FLAC/Opus is an explicit format-dispatch table in `audio_join.py`, and the download endpoint reuses this project's own established discipline of server-generated UUID storage paths with user text used only for display/`Content-Disposition`, never for path construction.
 
-The key risks are concentrated in two areas: (1) ROCm/RDNA4 hardware risk, since RX 9070 XT (gfx1201) support is very new (ROCm 7.2, March 2026), community reports show model-variant-specific silent failures (voice-cloning "Base" checkpoints hang/produce nothing on AMD; the CustomVoice variant this app needs is reported working), and Podman GPU passthrough has several independently-required pieces (device flags, group membership, SELinux booleans) that are individually easy to get right and collectively easy to miss in a real deployment vs. an ad hoc test; and (2) multi-call TTS/LLM consistency risk, since voice timbre can drift across independently-generated segments for the same character (mitigated by a fixed seed plus byte-identical voice instructions per character, stored in the data model), and LLM cast detection on long novels will produce duplicate/renamed characters across chunks unless the resolved cast list is explicitly re-supplied as context on every chunk (mitigated by the cast merge/rename wizard already scoped as a requirement). Both risk areas should be de-risked early via smoke tests before the rest of the pipeline is built around them.
+The key risks are: (a) "immediate cancel" quietly regressing to today's best-effort "stops before next segment" if the lock is released before the underlying call is truly finished (a race that can double-run the GPU); (b) the 0.6B checkpoint silently dropping `instruct` voice-steering entirely — a real, verified behavioral difference the UI must surface, not just a speed/VRAM tradeoff; (c) ROCm VRAM fragmentation across repeated model swaps on a budget with limited headroom; and (d) reintroducing a path-traversal-class bug by using the new user-editable filename as an on-disk path, which the codebase has twice already explicitly guarded against elsewhere (T-03-01/T-03-06). All four are directly actionable — this research file names the exact fix for each.
 
 ## Key Findings
 
 ### Recommended Stack
 
-The stack cleanly splits into a GPU-free web/orchestration layer and a GPU-scoped inference microservice. Backend: FastAPI (native SSE for live progress, Pydantic schemas shared across Grok structured output / DB models / API responses) plus SQLModel/SQLite (single projects.db, audio referenced by filesystem path, never blob-stored) plus ebooklib/BeautifulSoup/lxml for EPUB parsing (defensive recover=True parsing, real-world EPUBs are often malformed) plus ffmpeg via subprocess (concat demuxer for joining same-codec segments). Frontend: React 19 + Vite + TanStack Table v8 + shadcn/ui + Tailwind v4, a client-rendered SPA fits this interactive, stateful editor with no SEO/SSR need. TTS: Qwen3-TTS-12Hz-1.7B-CustomVoice (Apache 2.0, HF Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice) run via plain HF Transformers (qwen-tts pip package, attn_implementation="sdpa") on PyTorch ROCm 7.2, explicitly avoiding vLLM/vLLM-Omni (RDNA4 kernel support still experimental, FP8 silently falls back to FP32) and flash-attn (CUDA-only). LLM: xai-sdk against grok-4.3 (1M context, cheaper than 4.5, sufficient for cast/segment structured extraction). Deployment: Podman + Quadlets (systemd-managed units), not ad hoc podman-compose, for a persistent self-hosted service.
+v1.0's stack (FastAPI + SQLModel/SQLite, Qwen3-TTS-12Hz-1.7B-CustomVoice via the `qwen-tts` pip package on ROCm PyTorch, React+Vite+TanStack Table frontend, ffmpeg-via-subprocess join, OpenRouter for LLM analysis) is unchanged and confirmed correct for v1.1's needs — no new core dependency is required. The v1.1-specific additions all use stdlib/already-installed primitives: `transformers.StoppingCriteria`/`StoppingCriteriaList` (already pinned via `transformers==4.57.3`) for cancellation, stdlib `threading.Event`/`Lock` and `gc`/`torch.cuda.empty_cache()` for the model swap, and ffmpeg's built-in `flac` encoder plus `libopus` (confirm present in the deploy VM's ffmpeg build) for the new output formats.
 
-**Core technologies:**
-- Qwen3-TTS-12Hz-1.7B-CustomVoice: self-hosted multi-voice TTS, preset + free-text instruction steering matches the app's exact voice-assignment design, confirmed working on AMD/ROCm (unlike the Base/voice-cloning variant)
-- FastAPI + SQLModel + SQLite: backend orchestration + persistence, async, native SSE, one dependency for both ORM and shared Pydantic schemas
-- React 19 + Vite + TanStack Table + shadcn/ui: spreadsheet-style editable table UI, headless table engine is the standard for custom editable data grids, no heavier/paid grid library needed
-- xai-sdk + Grok structured outputs: schema-guaranteed JSON for cast detection and segmentation, avoids manual JSON-parsing fragility
-- ffmpeg (subprocess, concat demuxer): reliable, fast segment joining, avoid pydub (unmaintained, adds overhead)
-- Podman + Quadlets, GPU device flags scoped only to the TTS container: matches the project's Podman constraint and the "TTS as isolated GPU service" architecture pattern
+**Core technologies for v1.1:**
+- `transformers.StoppingCriteria` (pinned `transformers==4.57.3`) — per-token cancellation check inside the talker's real HF `generate()` loop; the only mechanism that interrupts inside `model.generate()` without killing the resident-model process
+- A bound-method patch/injection on `model.model.talker.generate` in `tts_service/model.py` — bridges the outer `qwen-tts` wrapper's dropped `**kwargs` to the inner call that actually honors `stopping_criteria` (verified against the installed wheel, not assumed)
+- `Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice` (same HF family, same `from_pretrained`/`generate_custom_voice` call shape as the 1.7B model already in use) — the second selectable checkpoint
+- stdlib `del` + `gc.collect()` + `torch.cuda.empty_cache()` (ROCm build aliases `torch.cuda.*` to HIP transparently) — VRAM release pattern for swapping resident models
+- ffmpeg native `flac` encoder + `libopus` — no new packages; extend the existing `codec_args` dispatch table in `audio_join.py`
 
 ### Expected Features
 
-The domain has a clear, consistent shape across every competitor surveyed (VoxNovel, TTS-Story, audiobook-creator, ElevenLabs, Play.ht): LLM cast detection, segmentation, human review/correction, per-character voice assignment, batch generation with progress, join. This project's Active requirements in PROJECT.md already match the correct table-stakes set; research adds confidence, not new scope, plus flags one architecturally load-bearing pattern (content-hash caching) that isn't clearly documented anywhere in the competitor set but is essential for this app's stated "regenerate only the edited row" requirement.
+v1.0's feature research (LLM-driven cast detection + segmented multi-voice TTS + spreadsheet review + content-hash caching) remains the product's core value and is unaffected by v1.1. v1.1's own feature research is narrowly UX-pattern-focused: state-switch button legibility (NN/g), model-selector plain-language labeling, and export/download conventions (Carbon Design System).
 
-**Must have (table stakes):**
-- .txt/.epub upload, LLM cast detection with age/gender/personality inference (chunked, with cross-chunk continuity for long texts)
-- LLM segmentation into narration/dialogue with suggested speaker + voice instructions per row
-- Cast review/merge wizard before segment generation, every competitor with this step exists specifically because misattribution is common; competitors without it (audiobook-creator) cite it as a known gap
-- Editable segment table, per-row TTS generation, content-hash-based caching so edits only regenerate the changed row, ordered audio concatenation, project save/reopen, progress indicator
+**Must have (table stakes) for v1.1:**
+- Unified 3-state (yellow=idle/stale, red=generating, green=complete) button reused identically across per-row, per-character-preview, and batch generate/stop/play — icon+color+text must agree (NN/g state-switch research: color- or icon-alone is the #1 confusion source)
+- Synchronous click-time lock/disable on every generate-triggering control, not just relying on the existing app-wide `generationLocked` poll
+- Any edit that invalidates cached audio visibly reverts the button to yellow (already backend-supported via GEN-03; this is now the *only* visual carrier of that state since the status badge column is dropped)
+- Download button appears only once `project.output_path` exists, filename pre-filled from the project's configured value
+- Stop control gives instant "Stopping…" visual feedback even though the actual backend abort may take up to one decode step
 
-**Should have (competitive differentiators, already implicit in this project's design):**
-- Unified single-table editing (Narrator + Voice Instructions + Text in one grid) vs. competitors' split wizard/hidden-text approaches
-- Free-text voice instructions blended with presets (avoids needing large voice libraries or cloning)
-- Segment-level content-hash caching (more rigorous than competitors' undocumented "regenerate this line" features)
-- Fully local/self-hosted TTS with zero per-request cost, Tailscale-only exposure, a genuine differentiator vs. every commercial competitor's metered cloud model
+**Should have (differentiators):**
+- Plain-language model-size labels ("Higher quality (1.7B)" / "Faster (0.6B)") rather than raw model IDs
+- One consistent color-button vocabulary reused across all three scopes (not different controls per scope) — the differentiator is consistency, not novelty
 
 **Defer (v2+):**
-- Voice preview and bulk row reassignment (P2, add once the core loop is validated, cheap to add later)
-- Cost/usage visibility for LLM spend (P2, nice-to-have)
-- Chapter markers/M4B export, voice cloning from personal recordings, PDF input, all explicitly already Out of Scope in PROJECT.md; research confirms these are correctly deferred, not gaps
+- True mid-inference hard-kill of the GPU call beyond what `StoppingCriteria` achieves — explicitly a harder backend problem, out of scope for this UX milestone
+- Auto-download/auto-play on completion — anti-feature; keep user-triggered per existing GEN-03 "no auto-regenerate" precedent
+- A 4th button state for "queued" — milestone explicitly wants 3 states; fold queued into yellow
 
 ### Architecture Approach
 
-A clean two-container split: a thin, GPU-free FastAPI backend (project CRUD, EPUB parsing, Grok orchestration, job queue, ffmpeg joining) talking over the internal Podman network to a separate, GPU-scoped TTS microservice (Qwen TTS resident in VRAM, single synchronous HTTP endpoint, concurrency capped at 1). The job queue is not a separate system; Segment.status (pending, queued, generating, complete, error, stale) IS the queue, consumed by one in-process asyncio worker, durable across restarts (resume generating to queued on startup) with zero extra infrastructure (no Redis/Celery). "Regenerate one segment" and "generate all" are the same code path, enqueue N segment IDs vs. one. Persistence is SQLite for structured state plus filesystem for text/audio blobs, one directory per project, bind-mounted outside both container images so project data survives rebuilds.
+The app is a two-process/two-container topology (verified, not assumed): a CPU-only FastAPI backend and a separate GPU-owning `tts_service` FastAPI process communicating over HTTP (`httpx.post` + `run_in_threadpool`), both long-lived with a single resident model. v1.1's four capabilities integrate into this boundary without changing its shape — no new services, no task queue, no WebSocket migration. Cancellation and model-swap both live inside `tts_service`'s existing module-global pattern (mirroring the backend's own `_active_generation_label` single-flight lock, just moved one process over). FLAC/Opus and the download endpoint are fully independent of the TTS boundary, touching only `audio_join.py`/`config.py`/`main.py`.
 
-**Major components:**
-1. Frontend SPA (React), editable segment table + cast wizard + config sidebar + live progress (poll first, SSE if needed)
-2. Backend/Orchestrator (FastAPI, GPU-free), upload/parsing, Grok analysis client with chunk+reconcile logic, job queue worker, ffmpeg joiner, all project/character/segment persistence
-3. TTS Inference Service (separate Podman container, ROCm, GPU device flags scoped only here), loads Qwen TTS once, exposes one synthesis endpoint, concurrency=1
-4. Persistence layer, SQLite (metadata/state) + filesystem (source text, per-segment audio, final joined output), never audio blobs in the DB
+**Major components (existing, extended by v1.1):**
+1. `backend/app/generation_worker.py` — app-wide single-flight lock (`try_claim_generation`/`release_generation`); extended in v1.1 from a `project_id`-keyed task registry to a `label`-keyed one so per-segment/per-character cancel has an addressable task handle
+2. `backend/tts_service/model.py` — holds the resident model as a module global; v1.1 adds `ensure_loaded(model_id)` load/unload logic plus a `threading.Event`-based cancel flag and the `StoppingCriteria` injection
+3. `backend/app/cache_key.py` — content-hash cache key; `TTS_MODEL_VERSION` moves from a hardcoded constant to a live per-project value (`Project.tts_model`) so a swap correctly busts stale cross-model cache hits
+4. `backend/app/audio_join.py` / `backend/app/config.py` — ffmpeg codec dispatch and the output-format allowlist; extended to an explicit `{flac, mp3, opus}` mapping with no catch-all fallback, WAV removed
+5. Frontend `useGeneratePlayState` (new, to be extracted) — a single shared hook/component consumed by all 4 existing hand-rolled generate/play button implementations (`SegmentTable`, `CharacterCard`, `ConfigPanel`'s character-preview control, `ConfigPanel`'s batch control), replacing per-file duplicated state derivation
+
+**Suggested build order (from Architecture research):** Capability 1 (cancel) first — it's the hardest unknown and the most architecturally invasive (per-segment generate must become a background task). Capability 2 (model swap) second, extending the same `tts_service` engine-state module. Capabilities 3 (codec) and 4 (download/filename) last — fully decoupled from 1/2, additive and mechanical, can ship together in one Config Panel phase.
 
 ### Critical Pitfalls
 
-1. Podman/ROCm GPU passthrough works in an ad hoc test but silently fails in the real deployed container/Quadlet: device flags (/dev/kfd, /dev/dri), --group-add keep-groups, and the SELinux container_use_devices boolean must all be baked into the actual deployment unit from day one and verified from inside the real deployed container, not just a manual podman run test.
-2. Qwen TTS ROCm compatibility is not uniform across model variants: the Base/voice-cloning checkpoint has reported silent failures on consumer AMD GPUs; pin and smoke-test the exact CustomVoice checkpoint on the actual RX 9070 XT (real audio bytes out, not just GPU utilization) before building the review UI around it.
-3. Voice timbre drift across independently-generated segments for the same character: mitigate by storing a fixed per-character seed and byte-identical voice-instruction text in the data model from the start (not per-row re-derivation); QA this across a full long book, not just short preview clips.
-4. LLM re-identifies the same character under different names across chunks of a long novel: always re-supply the resolved cast list as context on every subsequent chunk; treat the already-planned cast merge/rename wizard as the essential second line of defense, not optional polish.
-5. Per-segment persistence is required, not optional, from day one: a whole-job-in-memory generation loop with no per-segment state loses all progress on any single failure and directly blocks the "regenerate one row" requirement; design the status/audio-path persistence model once, serving both resumability and single-row regeneration.
+1. **Cancel that only stops the queue, not the in-flight GPU call** — the existing batch cancel already documents this exact limitation ("stops before the next segment... does not abort the in-flight one"). Naively reusing `task.cancel()` for per-segment/per-character cancel reproduces the same non-fix with a faster-looking UI. Avoid by making `tts_service`'s own generate loop genuinely interruptible via `StoppingCriteria`, not just cancelling the backend's wait.
+2. **Releasing the global generation lock before the killed call has actually stopped** — opens a window for two concurrent `/synthesize` calls to race the single resident model (GPU errors, garbled audio). Avoid by holding the lock until the underlying HTTP call to `tts_service` is confirmed returned/aborted, not merely until `.cancel()` was requested; extend the existing `test_lock_releases_after_batch_cancel` test pattern to per-segment/per-character cancel.
+3. **No addressable cancellable task handle for per-segment/per-character generation today** — only the batch path has a task registry; per-segment generate is awaited synchronously inline. Avoid by generalizing `_running_generations` to a `label`-keyed dict (reusing the exact `try_claim_generation` label strings already constructed) and converting per-segment generate to the same fire-then-202-poll contract batch/preview already use.
+4. **Model swap breaks the "load exactly once, never reload" invariant and the cache doesn't know a swap happened** — silently serves stale audio from the wrong model as a false cache hit. Avoid by wiring the live model id into `compute_cache_key` and gating swap-in-progress behind the same lock plus a `_ready=False` window.
+5. **VRAM fragmentation across repeated ROCm model swaps** on a 16GB budget with limited headroom — `del`+`empty_cache()` doesn't guarantee full reclaim. Mitigate with before/after VRAM logging (`torch.cuda.mem_get_info()`) and a documented container-restart fallback if fragmentation proves real on the actual RX 9070 XT hardware.
+6. **User-editable output filename used as the on-disk path** — reopens a path-traversal/overwrite class of bug this codebase has twice already explicitly guarded against (T-03-01/T-03-06). Keep the on-disk path a server-generated UUID always; the user's name is `Content-Disposition`-display-only, via `FileResponse`'s built-in `filename=` support (never hand-formatted header strings).
+7. **Four independently hand-rolled generate/play button implementations** (`SegmentTable`, `CharacterCard`, `ConfigPanel`'s two separate controls) multiplying drift if the 3-state rework is bolted onto each in place. Extract one shared hook/component first, then layer 3-state semantics on top — don't repeat the state derivation four times.
 
 ## Implications for Roadmap
 
-Based on research, suggested phase structure:
+Based on research, the milestone's four capabilities plus the button-consolidation prerequisite suggest the following phase structure. This maps closely to the "Suggested Build Order" in ARCHITECTURE.md and the "Phase to address" column in PITFALLS.md, both of which independently converge on the same sequencing logic (cancel is hardest/most invasive → do first; codec/download are decoupled/mechanical → do last).
 
-### Phase 1: Foundation, Ingestion & Frontend Shell
-**Rationale:** Data model (Project/Character/Segment) is the foundation everything else depends on. File upload/parsing has no GPU or LLM dependency and is fully testable standalone. The frontend table/sidebar shell can be built against fixture/mocked data as soon as the API contract is defined, decoupling UI iteration from the riskiest backend pieces.
-**Delivers:** Project CRUD API, SQLite schema, .txt/.epub upload + parsing to plain text/chapters, frontend table + sidebar shell rendering mock segment/character data.
-**Addresses:** Ebook/text upload (table stakes), project persistence scaffold.
-**Avoids:** Building UI atop unstable backend APIs; nothing GPU-dependent yet so no ROCm risk introduced here.
+### Phase 1: Immediate Cancellation (Capability 1)
+**Rationale:** The one genuine technical unknown in this milestone (does `stopping_criteria` actually abort a live ROCm decode loop, not just the reference CUDA path) and the most architecturally invasive change — per-segment generate must become an addressable background task before any cancel endpoint has something to reach. Landing it first de-risks the milestone's hardest question early and gives Phase 2 a shared `tts_service` engine-state module to extend rather than build from scratch.
+**Delivers:** `threading.Event`-based cancel flag + injected `StoppingCriteria` in `tts_service/model.py`; new `POST /cancel` on `tts_service`; `generation_worker._running_generations` generalized to a label-keyed registry; per-segment and per-character generate converted from synchronous await to the same fire-then-202-poll contract batch generation already uses; new `POST /segments/{id}/generate/cancel` and `POST /characters/{id}/preview/cancel` routes.
+**Addresses:** FEATURES.md's "Stop control gives instant visual feedback" and "any edit invalidating audio visibly reverts to idle" table stakes.
+**Avoids:** Pitfalls 1, 2, 3 (fake-immediate cancel, lock-released-early race, no task handle to cancel).
 
-### Phase 2: TTS Service Spike (parallel track, start early)
-**Rationale:** This is the highest-risk, most environment-specific component (newest-generation consumer GPU + ROCm 7.2 + Podman rootless device passthrough all stacked) and nothing else in the pipeline strictly blocks on it, de-risk it in parallel with Phase 1/3 rather than discovering GPU issues late.
-**Delivers:** Standalone ROCm container serving Qwen3-TTS-1.7B-CustomVoice via a minimal HTTP endpoint; confirmed real audio bytes out on the actual RX 9070 XT; GPU passthrough verified from inside the real deployed container (not just an ad hoc test); a mock TTS backend (TTS_BACKEND=mock) wired in for GPU-less local dev.
-**Avoids:** Pitfall 1 (GPU passthrough silently failing in real deployment), Pitfall 2 (model-variant-specific silent ROCm failures).
+### Phase 2: On-Demand Model Swap (Capability 2)
+**Rationale:** Mechanically well-understood (a standard PyTorch load/unload pattern) once Phase 1's `tts_service` engine-state module exists to extend — the open questions here (speaker-list parity across checkpoints, VRAM fragmentation, real swap latency) are spike-and-verify items on real hardware, not architecture risk.
+**Delivers:** `Project.tts_model` DB column; `ensure_loaded(model_id)` load/unload function in `tts_service/model.py` gated by the existing single-flight lock; live model id threaded into `compute_cache_key` (replacing the hardcoded `TTS_MODEL_VERSION` constant); explicit `POST /model/{model_id}/load` endpoint plus a matching backend route the Config Panel calls; 0.6B `instruct`-drop surfaced as a warning in the model dropdown.
+**Uses:** stdlib `del`/`gc.collect()`/`torch.cuda.empty_cache()`; the second HF checkpoint `Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice`.
+**Implements:** the `_engine_state` module scaffold introduced conceptually in Phase 1, extended with resident-model tracking.
+**Avoids:** Pitfalls 4 (stale cross-model cache hits) and 5 (VRAM fragmentation) — both explicitly require real-RX-9070-XT-hardware verification before considered done, not just mock-backend passing.
 
-### Phase 3: LLM Analysis Pipeline
-**Rationale:** Depends only on Phase 1's data model and parsing; fully testable independently of TTS. Produces the real Character/Segment data the frontend needs to move off fixtures. Chunking strategy and cast continuity must be designed in from the start, retrofitting cross-chunk reconciliation after the fact is expensive.
-**Delivers:** xAI Grok integration with structured-output cast detection + segmentation; chapter/paragraph-aware chunking with running cast-list context passed to every chunk; reconciliation pass; cast review/merge wizard wired to real analysis output.
-**Addresses:** LLM cast detection with inferred traits, text segmentation with suggested speaker/voice instructions, cast review step (all table-stakes P1 features).
-**Avoids:** Pitfall 4 (cross-chunk character duplication), Pitfall 5 (mid-scene chunk splits breaking speaker attribution).
+### Phase 3: Config Panel Output Options — Codec + Filename/Download (Capabilities 3 & 4)
+**Rationale:** Fully decoupled from Phases 1–2 (no shared code with the TTS HTTP boundary) and mostly decoupled from each other; additive/mechanical/lower-risk, so sequenced last. Natural to ship both in one phase since both extend `Project` with new per-project settings columns in a single migration pass, and the download endpoint's Content-Type/extension logic is more naturally written once the codec set is final.
+**Delivers:** Explicit `{flac, mp3, opus}` codec dispatch table in `audio_join.py` (no catch-all fallback), `_ALLOWED_OUTPUT_FORMATS` and `load_settings()`'s default updated together with deploy Quadlet config audited; `Project.output_filename` column; new `GET /projects/{id}/download` using `FileResponse`'s `filename=` support (server-generated UUID path, user text display-only).
+**Addresses:** FEATURES.md's "output-format dropdown" and "editable output filename + download" table stakes.
+**Avoids:** Pitfalls 6 (silent format mis-encode), 7 (stale WAV default breaking deploys), 8 (filename-as-path traversal/overwrite), 9 (hand-built Content-Disposition header).
 
-### Phase 4: Generation Pipeline (Queue, TTS Integration, Joining, Regeneration)
-**Rationale:** Depends on Phase 2 (TTS service exists) and Phase 3 (segments exist to generate). This is where the data-model decision from Features/Architecture research (content-hash caching, segment status as queue) becomes real, build it as one queue-a-segment primitive from the start so "generate all" and "regenerate this row" are the same code path, not two.
-**Delivers:** Single async worker consuming the SQLite-backed segment queue; per-segment status persistence (pending/queued/generating/complete/error/stale) with resume-on-restart; TTS client HTTP integration with per-segment timeout; ffmpeg concat joining (validated specifically against the "edit row 50 of 200, rejoin" scenario, not just a fresh uniform batch); regenerate-single-segment wired to the same primitive.
-**Uses:** Qwen3-TTS-1.7B-CustomVoice, FastAPI async worker, ffmpeg concat demuxer, SQLModel/SQLite.
-**Implements:** Job Queue component, Audio Joiner component, TTS Client boundary.
-**Avoids:** Pitfall 3 (voice drift, fixed seed per character built into this phase's data model), Pitfall 6 (audio join clicks/format mismatch), Pitfall 7 (no resumable/partial-failure model).
-
-### Phase 5: Progress UI, Deployment & Polish
-**Rationale:** Live progress and Podman/Tailscale deployment are the final integration layer; deployment scaffolding (Quadlets, GPU device scoping) can be sketched earlier but final validation belongs after the pipeline works locally end-to-end.
-**Delivers:** Per-row status badges + aggregate progress (polling first, SSE upgrade if polling proves too chatty), Podman Quadlet units with GPU device flags scoped only to the TTS container, Tailscale-served deployment, disk-space/VM sizing validated against the actual ROCm image + model weights + a full generated project.
-**Addresses:** Live conversion progress panel (already scoped requirement).
-**Avoids:** Pitfall 8 (ROCm image bloat/disk exhaustion, validate VM storage headroom here), UX pitfalls around opaque progress and unfed rejoin feedback.
+### Phase 4: Unified Generate/Stop/Play Button (Capability 5 — the UX layer over Phases 1–3)
+**Rationale:** Depends on Phase 1's backend contract change (per-segment generate flips from synchronous 200 to async 202+poll) — building this UI against today's synchronous shape would be wasted work. Also depends on Phase 2/3 only for the config-panel-specific controls (model dropdown, format dropdown, download button) it wires up alongside the color-button rework.
+**Delivers:** One shared hook/component (`useGeneratePlayState` or equivalent) owning yellow/red/green derivation and click dispatch, consumed by all 4 existing call sites (`SegmentTable`, `CharacterCard`, `ConfigPanel`'s character-preview control, `ConfigPanel`'s batch control) — extraction happens *before* adding the new red state, not after. Status badge column removed from the segment table. Config panel model-size and output-format dropdowns wired to the new backend endpoints, disabled while `generationLocked`.
+**Addresses:** FEATURES.md's entire v1.1 UX table-stakes list.
+**Avoids:** Pitfall 10 (four divergent hand-rolled implementations drifting independently).
 
 ### Phase Ordering Rationale
 
-- Data model comes first because every other component (parsing output, LLM output, TTS job state, joining) writes into it, Features research explicitly identifies content-hash/per-segment-audio persistence as "the single most load-bearing architectural decision," so it must be correct before anything else is built on top.
-- The TTS/ROCm spike is pulled forward into its own early, parallel phase specifically because Architecture and Pitfalls research both independently flag it as the highest-risk, most environment-specific piece of the whole project, waiting until "generation pipeline" phase to discover GPU passthrough or model-variant issues would be expensive to unwind.
-- LLM analysis is sequenced before the generation pipeline because segments must exist before they can be queued for TTS, but it does not depend on the TTS spike being complete, hence the parallel-track structure in the build order.
-- Generation pipeline (queue + TTS integration + joining + regeneration) is deliberately one phase, not split, because Pitfalls research shows these are the same data model serving two needs (resumability and single-row regeneration), splitting them risks retrofitting one onto the other.
-- Deployment/progress UI is last because it's the integration/validation layer over an already-working local pipeline, though its scaffolding (Quadlet skeletons) can be drafted incrementally alongside earlier phases per Architecture's suggested build order.
+- Cancel (Phase 1) must land first because it is both the hardest unresolved technical question and a structural prerequisite (addressable task handles) that Phases 2 and 4 build on.
+- Model swap (Phase 2) reuses Phase 1's `tts_service` engine-state scaffold rather than inventing a second one — sequencing them adjacently avoids two separate locking/state-management designs in the same file.
+- Codec/download (Phase 3) has zero shared code with the TTS HTTP boundary, so it can be built, tested, and reviewed independently of GPU-hardware verification — a good phase to de-risk in parallel with Phase 2's hardware validation if schedule pressure demands it, though the default sequential order above is simplest.
+- The button rework (Phase 4) is deliberately last because it is the one place all three backend capabilities become visible to the user — building it against a stable, already-changed backend contract avoids redoing frontend work against a moving synchronous-vs-async API shape.
 
 ### Research Flags
 
-Phases likely needing deeper research during planning:
-- **Phase 2 (TTS Service Spike):** ROCm 7.2/RDNA4 (gfx1201) support is very recent and fast-moving; qwen-tts package is under 6 months old with frequent breaking changes; exact decode_window_frames/inference-param defaults that avoid the known ROCm slowdown bug are not clearly documented, needs research-phase to pin exact working versions/params at implementation time.
-- **Phase 3 (LLM Analysis Pipeline):** Cross-chunk character reconciliation strategy is a synthesized recommendation (MEDIUM confidence, general long-context/RAG pattern applied by analogy), not a directly-sourced, novel-specific benchmark, worth validating chunk-size/context-window assumptions against Grok's actual current limits and real book lengths before committing to a chunking approach.
+Phases likely needing deeper research during planning (`--research-phase`):
+- **Phase 1:** The `StoppingCriteria`-actually-aborts-a-live-ROCm-decode-loop claim is verified as reachable in the library's Python call chain (HIGH confidence, read from the installed wheel) but NOT yet verified against real GPU inference (MEDIUM confidence) — a short spike against the real deployment target should happen early in this phase, not be assumed.
+- **Phase 2:** VRAM fragmentation behavior under repeated ROCm swap cycles has no established ground truth for this app's specific hardware (RX 9070 XT/gfx1201) — real-hardware measurement (`torch.cuda.mem_get_info()`/`rocm-smi`) is a required verification step, not a documentation lookup. Also verify `get_supported_speakers()` parity between the 1.7B and 0.6B checkpoints once the 0.6B weights are actually downloaded.
 
-Phases with standard patterns (skip research-phase):
-- **Phase 1 (Foundation, Ingestion & Frontend Shell):** FastAPI/SQLModel/EPUB parsing/React+TanStack Table are all HIGH-confidence, well-documented, standard patterns with official docs and working examples.
-- **Phase 4 (Generation Pipeline):** Job-queue-as-status-column, ffmpeg concat demuxer, and the TTS-as-microservice pattern are all corroborated by multiple real reference implementations (Qwen3-TTS-Openai-Fastapi-Rocm, TTS-Story), standard, low-research-risk implementation.
-- **Phase 5 (Deployment):** Podman GPU passthrough flags are documented in official Red Hat/AMD docs; the main risk is execution discipline (baking flags into Quadlets), not unknown patterns.
+Phases with standard patterns (skip research-phase, patterns already well-documented in this research):
+- **Phase 3:** ffmpeg codec dispatch and `FileResponse.filename=` are conventional, well-documented mechanisms; the main verification is a one-line `ffmpeg -codecs | grep -E 'opus|flac'` check on the deploy container, not open research.
+- **Phase 4:** Standard React hook-extraction refactor; NN/g state-switch guidance is already synthesized above.
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | MEDIUM-HIGH | HIGH on web framework/EPUB/xAI API choices (official docs, mature ecosystem); MEDIUM on Qwen TTS + ROCm 7.2/RDNA4 specifics since the model (qwen-tts package) and official gfx1201 support are both very recent (early-to-mid 2026) |
-| Features | MEDIUM-HIGH | Grounded in multiple real open-source competitor projects (VoxNovel, TTS-Story, audiobook-creator) plus commercial tools; the content-hash caching pattern is a synthesized recommendation (not directly documented by any competitor) rather than sourced fact |
-| Architecture | MEDIUM-HIGH | Grounded in real open-source projects of near-identical shape plus official Podman/ROCm docs; specific numeric tuning values (concurrency limits, timeouts) are LOW confidence and should be validated during implementation |
-| Pitfalls | MEDIUM-HIGH | ROCm/Podman and audio-joining findings verified against official docs and GitHub issues (HIGH); Qwen3-TTS-specific quirks drawn from GitHub issues/community write-ups (MEDIUM, fast-moving project); LLM cross-chunk consistency findings are MEDIUM (general structured-output/long-context research applied by analogy, not novel-specific benchmarks) |
+| Stack | HIGH | v1.1-specific findings verified by directly reading the installed `qwen-tts==0.1.1` wheel's source in the production container image, not from docs/blogs; ffmpeg codec presence (MEDIUM) still needs a one-time confirmation on the deploy VM (no ffmpeg binary in the research sandbox) |
+| Features | MEDIUM-HIGH | UX-pattern sources (NN/g, Carbon, uxpatterns.dev) are authoritative but general, cross-checked against direct codebase inspection of the actual existing button/lock/status code, which grounds them in this app's real constraints |
+| Architecture | HIGH | Call boundary, cancel semantics, and the `stopping_criteria` hook's reachability are all verified directly against this repo's code and the installed `qwen_tts` wheel, not assumed from general HF/Transformers documentation |
+| Pitfalls | HIGH | Grounded directly in this repo's existing code (generation_worker, tts_service, audio_join, frontend components) plus targeted, cross-checked web research on ROCm memory behavior and asyncio thread-cancellation limitations (a well-documented, non-project-specific Python limitation) |
 
-**Overall confidence:** MEDIUM-HIGH
+**Overall confidence:** HIGH — this is unusually well-grounded research for a milestone research pass because three of the four research files verified claims by reading the actual installed library source and the actual current codebase, not by inferring from general documentation.
 
 ### Gaps to Address
 
-- Qwen3-TTS's exact hard input-length ceiling per synthesis call is not clearly documented (LOW confidence), validate empirically against the deployed model/checkpoint during Phase 2/4; defensively cap and sentence-split oversized segments until confirmed.
-- Safe/default inference parameters (e.g. decode_window_frames) that avoid the known ROCm CUDA-graph-capture slowdown bug are not pinned down, benchmark per-segment generation time early in Phase 2 and treat a 5-10x regression as a red flag requiring param investigation, not "just slow hardware."
-- Cross-chunk character reconciliation strategy (Phase 3) is a synthesized best-practice, not directly sourced for this domain, validate against real book-length test cases and confirm whether Grok's actual current context window makes heavy chunking unnecessary for most novels before over-building the chunking machinery.
-- CDI-based GPU passthrough (--device amd.com/gpu=...) vs. classic --device /dev/kfd --device /dev/dri flags: CDI exists but wasn't confirmed as more mature for this specific hardware; default to the classic flag pattern (HIGH confidence, official docs) and revisit CDI only if it proves necessary.
-- qwen-tts pip package is new (about 7 releases since Jan 2026 debut) and likely to have breaking changes between minor versions, pin an exact version in the container image during Phase 2 rather than tracking latest, and re-verify compatibility before any dependency bump.
+- **`StoppingCriteria` abort latency on real ROCm hardware is unverified** (reachable in the call chain per the installed wheel, but not yet exercised end-to-end against live GPU inference) — treat as the first spike in Phase 1, not a solved problem.
+- **`libopus` presence in the deploy container's ffmpeg build is unconfirmed** (no ffmpeg binary available in the research sandbox) — a one-line `ffmpeg -codecs` check should be the first step of Phase 3, before any codec-dispatch code is written.
+- **VRAM fragmentation across repeated model swaps has no measured baseline on the RX 9070 XT** — Phase 2 should include an explicit real-hardware swap-cycle test (e.g. 10+ swaps in one session) with before/after `torch.cuda.mem_get_info()` logging as an exit criterion, not just "the code runs without an exception."
+- **Speaker-list parity between the 1.7B and 0.6B CustomVoice checkpoints is unknown** — `get_supported_speakers()` may differ; verify once the 0.6B weights are downloaded, in Phase 2.
+- **Whether the milestone's "click kills it immediately" copy can be literally true, or should be scoped to "UX-level immediacy" (fast disable/relabel/poll) with the true GPU-call kill flagged as a harder backend problem** — PITFALLS.md and ARCHITECTURE.md both flag this as a decision the team must make explicitly and document (not let it default silently), before Phase 1's button copy is finalized in Phase 4.
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- QwenLM/Qwen3-TTS GitHub repo (https://github.com/QwenLM/Qwen3-TTS) — model variants, install, usage
-- Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice on Hugging Face (https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice) — voice presets, instruct-steering, license
-- ROCm compatibility matrix, AMD official docs (https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html) — ROCm 7.2 RDNA4/gfx1201 official support
-- How to configure AMD GPU for using in Podman containers on RHEL9, Red Hat (https://access.redhat.com/solutions/7073764) — GPU passthrough flags/groups
-- FastAPI Server-Sent Events docs (https://fastapi.tiangolo.com/tutorial/server-sent-events/) and release notes (https://fastapi.tiangolo.com/release-notes/)
-- xai-sdk-python GitHub repo (https://github.com/xai-org/xai-sdk-python) and xAI Structured Outputs docs (https://docs.x.ai/developers/model-capabilities/text/structured-outputs)
-- ebooklib GitHub repo (https://github.com/aerkalov/ebooklib), SQLModel + FastAPI tutorial (https://sqlmodel.tiangolo.com/tutorial/fastapi/)
-- TanStack Table Editable Data example (https://tanstack.com/table/latest/docs/framework/react/examples/editable-data), shadcn/ui Data Table docs (https://ui.shadcn.com/docs/components/radix/data-table)
-- OpenAI TTS 4096-char limit (https://community.openai.com/t/tts-with-more-than-4096-characters/591842), Google Cloud TTS quotas (https://cloud.google.com/text-to-speech/quotas)
+- Direct inspection of the production container's installed `qwen-tts==0.1.1` source (`qwen_tts/inference/qwen3_tts_model.py`, `qwen_tts/core/models/modeling_qwen3_tts.py`)
+- This repo, direct code read: `backend/app/generation_worker.py`, `backend/app/main.py`, `backend/app/tts_client.py`, `backend/app/cache_key.py`, `backend/app/config.py`, `backend/app/audio_join.py`, `backend/tts_service/model.py`, `backend/tts_service/server.py`, `backend/tests/test_generation_lock.py`, `deploy/qwen-ebook-tts.container`, `deploy/qwen-ebook-backend.container`, `frontend/src/components/{SegmentTable,CharacterCard,ConfigPanel}.tsx`, `frontend/src/hooks/useGenerationLock.ts`, `frontend/src/api/client.ts`
+- [ROCm compatibility matrix (AMD official docs)](https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html) — RDNA4/gfx1201 support
+- [OpenAI TTS 4096-character limit discussion](https://community.openai.com/t/tts-with-more-than-4096-characters/591842), [Google Cloud TTS quotas](https://cloud.google.com/text-to-speech/quotas) — official docs, v1.0 long-text handling context
 
 ### Secondary (MEDIUM confidence)
-- Running Qwen TTS on AMD Strix Halo, tinycomputers.io (https://tinycomputers.io/posts/qwen-tts-on-amd-strix-halo.html) — concrete ROCm setup working end-to-end
-- Qwen3-TTS-12Hz-0.6B-Base not generating with AMD on Linux, Issue #93 (https://github.com/QwenLM/Qwen3-TTS/issues/93), AMD ROCm Voice Cloning Discussion #308 (https://github.com/QwenLM/Qwen3-TTS/discussions/308) — model-variant ROCm silent failure reports
-- GitHub antonsokolskyy/Qwen3-TTS-Openai-Fastapi-Rocm (https://github.com/antonsokolskyy/Qwen3-TTS-Openai-Fastapi-Rocm), Xerophayze/TTS-Story (https://github.com/Xerophayze/TTS-Story) — real-world reference implementations of this exact architecture
-- DrewThomasson/VoxNovel (https://github.com/DrewThomasson/VoxNovel), prakharsr/audiobook-creator (https://github.com/prakharsr/audiobook-creator) — competitor feature analysis
-- Inconsistent speaking rate, Qwen3-TTS Issue #239 (https://github.com/QwenLM/Qwen3-TTS/issues/239) — voice drift/speaking-rate documentation
-- ROCm/TheRock Issue #3077 (https://github.com/ROCm/TheRock/issues/3077) — decode_window_frames ROCm slowdown bug
-- ROCm-docker Issues #120 (https://github.com/ROCm/ROCm-docker/issues/120) / #92 (https://github.com/ROCm/ROCm-docker/issues/92) — image size/inode exhaustion
+- [State-Switch Controls: The Infamous Case of the "Mute" Button — NN/G](https://www.nngroup.com/articles/state-switch-buttons/)
+- [Carbon Design System — Export pattern](https://carbondesignsystem.com/community/patterns/export-pattern/)
+- [Model Selector Pattern — UX Patterns for Developers](https://uxpatterns.dev/patterns/ai-intelligence/model-selector)
+- [HIP out of memory when there appears to be plenty of memory available · ROCm/ROCm Discussion #2407](https://github.com/ROCm/ROCm/discussions/2407)
+- [run_in_executor not stopping thread after task cancellation in asyncio · Issue #107505 · python/cpython](https://github.com/python/cpython/issues/107505)
+- [FFmpeg Concat Guide: Demuxer, Filter, Protocol and API](https://renderio.dev/blogs/ffmpeg-concat-guide/)
+- [Running Qwen TTS on AMD Strix Halo (tinycomputers.io)](https://tinycomputers.io/posts/qwen-tts-on-amd-strix-halo.html)
 
 ### Tertiary (LOW confidence, needs validation)
-- Qwen3-TTS exact max input length per call, not found in official docs, only inferred from long-form-capability claims (medium.com writeup)
-- General RAG chunking-strategy sources applied by analogy to novel character-extraction (Weaviate, Firecrawl blogs), not domain-specific benchmarks
-- CDI (amd.com/gpu=) GPU passthrough maturity vs. classic device flags, confirmed to exist, not verified as more mature for this hardware
+- ffmpeg `libopus`/`flac` flag names and recommended bitrate/`-application voip` settings — not run locally in this research pass (no ffmpeg binary in sandbox); verify against `ffmpeg -h encoder=libopus`/`encoder=flac` on the deploy VM before merging
+- Qwen3-TTS's exact per-request max input length (v1.0 gap, still unresolved) — not blocking for v1.1's scope but remains an open item for future long-segment handling work
 
 ---
-*Research completed: 2026-07-09*
+*Research completed: 2026-07-13*
 *Ready for roadmap: yes*

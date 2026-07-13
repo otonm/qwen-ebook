@@ -1,0 +1,1 @@
+{"content":"Common FastAPI+GPU pattern: asyncio.Queue + semaphore-gated worker pulling jobs, BackgroundTasks for fire-and-forget with a job id, subprocess spawn for isolation when reload cost is acceptable. Not directly TTS/ROCm specific.","source":"web","provider":"websearch","confidence":"LOW","fetched_at":"2026-07-13T10:16:43.257Z","ttl":86400000,"kind":"web"}

@@ -207,3 +207,145 @@ Matches PROJECT.md's Active requirements; research confirms these are the correc
 ---
 *Feature research for: AI multi-voice ebook-to-audiobook / narration tools*
 *Researched: 2026-07-09*
+
+---
+
+# v1.1 Milestone Addendum: Generation-Control UX & Config Panel
+
+**Domain:** Generation-control UX (single generate/cancel/play button) and config-panel controls for a self-hosted TTS audiobook tool
+**Researched:** 2026-07-13
+**Confidence:** MEDIUM (web/UX-pattern sources, cross-checked across multiple independent write-ups; no primary vendor docs apply here since this is a UI/UX pattern question, not a library API question)
+
+## Existing App Context (from codebase, not research — grounds the recommendations below)
+
+- `frontend/src/hooks/useGenerationLock.ts` polls `GET /generation-status` every 1.5s and exposes a single app-wide boolean: **only one generation (a segment, a character preview, or a batch run, in ANY project) may be in flight at a time**, backend-enforced. Every generate-triggering control already consumes this (`SegmentTable.tsx`, `CharacterCard.tsx`, `ConfigPanel.tsx`).
+- `SegmentTable.tsx`'s `GeneratePlayButton` already does generate/play double-duty on one icon button (comment: `TBL-04`), but has no color coding and no "stop" state — it's disabled (not stoppable) while `generationLocked` is true and it isn't the row generating.
+- `ConfigPanel.tsx`'s batch "Stop" button (`handleStop` → `cancelBatchGeneration`) is explicitly **best-effort, not immediate**: the visible copy is *"Stops before the next segment — the segment currently generating may still finish."* This is a real, already-shipped constraint of the backend cancellation mechanic — there is no per-inference-call kill switch today.
+- `STATUS_BADGE` in `SegmentTable.tsx` is a separate `Badge` column mapping `GenerationStatus` (`pending/queued/generating/complete/error`) to label+icon+variant. The milestone drops this column and folds its meaning into button color.
+
+This context is the load-bearing constraint for everything below: the milestone's "click kills it immediately" promise for the red Stop state is a **UX/product requirement that is not yet backed by matching backend behavior** — flagged as a pitfall, not solved here (out of scope for this research file, in scope for the phase that builds it).
+
+## Feature Landscape
+
+### Table Stakes (Users Expect These)
+
+| Feature | Why Expected | Complexity | Notes |
+|---------|--------------|------------|-------|
+| Button label changes with state (icon + text, not icon alone) | NN/g's state-switch research: icon-only or color-only state changes are the #1 cause of user confusion in state-switch controls (their WebEx mute case study: red already meant something else, so red alone didn't communicate "muted"). Users need color **and** text **and** icon to agree. | LOW | Already partially true here (`GeneratePlayButton` swaps icon); milestone adds color + explicit verb label ("Generate Preview" / "Stop Generation" / "Play"). |
+| Button synchronously disables/locks before any network call fires | Standard "lock-before-request" pattern — disabling on `.then()` or on a query-library's `isPending` flag leaves a window where a fast double-click fires two requests. This app already has a *global* lock (`useGenerationLock`) for cross-control races, but each button's *own* click handler needs the same synchronous guard against back-to-back clicks on itself before the poll/prop update lands. | LOW | `handleClick` in `GeneratePlayButton` already sets `isGenerating` before `await` — keep this shape when adding the stop state; don't regress it. |
+| Any edit invalidating the audio visibly reverts the control to "stale/idle" | Confirmed existing product decision (GEN-03, invalidate-not-regenerate). The button-color scheme's yellow state IS the visual carrier for "stale" now that the badge column is gone — this is table stakes for the whole redesign to make sense, not optional polish. | LOW | Backend already flips `generation_status` back to `pending` on edit; frontend just needs to read that into the yellow state, no new backend logic. |
+| Download button appears only once the artifact actually exists, pre-filled with the configured filename | Carbon Design System's export pattern and general web convention: don't show a Download affordance for a file that doesn't exist yet, and don't force the user to retype a name that's already known (project's `output_path`/editable filename field). | LOW | Filename is already a planned config-panel field (v1.1 target); Download button just needs to gate on `project.output_path` truthiness, mirroring how `ConfigPanel.tsx` already gates the "Output File" row (`project.output_path ? ... : "Not generated yet"`). |
+| Stop control gives instant visual feedback even if the actual kill is delayed | Standard cancel-affordance microcopy pattern: disable-and-relabel ("Stopping…") immediately on click regardless of how long the backend actually takes to honor it, so the user isn't left wondering if the click registered. | LOW | Directly reusable: `ConfigPanel.tsx` already has this exact shape (`isCancelling` state, spinner) for the batch Stop — extend the pattern to per-row/per-character, don't reinvent it. |
+
+### Differentiators (Competitive Advantage)
+
+| Feature | Value Proposition | Complexity | Notes |
+|---------|-------------------|------------|-------|
+| One consistent 3-state color button reused identically across row/character/batch scopes | Most batch-job UIs (rendering queues, image-gen tools) use *different* controls per scope (icon button for items, labeled button for the whole batch) — unifying the visual language so "yellow/red/green means the same thing everywhere in this app" is a genuine differentiator for a single-user tool where the user will build muscle memory fast. Low cost here because the app already centralizes state through `generationLocked` + `GenerationStatus`. | MEDIUM | The differentiator is *consistency*, not novelty — do not invent a 4th state or per-scope variant; that would undo the value. |
+| Plain-language model-size labels in the model dropdown (not raw model IDs) | uxpatterns.dev's model-selector pattern: label by tradeoff ("Faster, lower VRAM" vs "Higher quality") rather than raw identifiers like `1.7B`/`0.6B`. Since this app already surfaces `TTS_MODEL_DISPLAY_NAME` as a single fixed string today, switching to a tradeoff-labeled dropdown is a small but real UX upgrade over just listing two SKUs. | LOW | Keep the actual size in parentheses for a technical single user (`Higher quality (1.7B)` / `Faster (0.6B)`) — full plain-language-only labeling is overkill for a one-person tool per PROJECT.md's "no multi-tenant/simple audience" framing. |
+
+### Anti-Features (Commonly Requested, Often Problematic)
+
+| Feature | Why Requested | Why Problematic | Alternative |
+|---------|---------------|------------------|-------------|
+| Making the Stop button *look* instant by optimistically clearing `generating` state client-side before the backend confirms | Feels more responsive; "the spinner should stop the instant I click Stop" | Creates a lying UI: the GPU call is still running (backend stop is best-effort, "may still finish"), so if the button flips to yellow/idle immediately, a second click could re-trigger generation while the old inference is still occupying the GPU/lock — reintroducing exactly the double-generate race this milestone is trying to eliminate | Show a transitional "Stopping…" label (disabled) between the click and the backend actually confirming cancellation via the lock/status poll — same pattern already used for `isCancelling` in `ConfigPanel.tsx`; extend, don't bypass |
+| A 4th button color/state for "queued" (batch item waiting its turn, distinct from "generating") | The old `STATUS_BADGE` map had `queued` as a real enum value | Milestone brief explicitly cycles only 3 states (yellow/red/green) and folds `queued` into "not yet generating" — adding a 4th visual state contradicts the stated simplification goal and re-introduces the ambiguity being removed | Treat `queued` as part of the yellow "idle/stale" state until the row's own generation actually starts (i.e. `generation_status === "generating"` is the only trigger for red) |
+| True hard-kill of the in-flight Qwen TTS inference call (interrupting the GPU mid-forward-pass) to make Stop *literally* immediate | The milestone's copy says "click kills it immediately" | This is a backend/infra problem (interrupting a synchronous HF `transformers` generate() call cleanly), not a UX pattern — no amount of button design solves it, and the existing Stop already documents itself as "stops before the next segment." Conflating the UX fix with a backend rewrite risks scope creep into a much harder problem for a single-GPU personal tool. | Scope this phase to *UX-level* immediacy (instant disable + relabel + fast lock-status poll so "generating" flips to "idle" as soon as the current segment's call actually returns) and flag the literal-mid-inference-kill as a separate, harder backend problem if the user later finds "stops before next segment" unacceptable in practice |
+| Auto-download the joined file the moment it's ready (no click required) | "Save the user a click once it's done" | Browsers block/flag unsolicited downloads as intrusive, and for a long unattended batch run the user may not be at the browser when it finishes — an unexpected auto-download either gets blocked by the browser or silently fills a Downloads folder with no context | Blue "Download" button that appears once ready and stays there; user-initiated, matches the Carbon export pattern and the app's existing pattern of user-triggered rather than auto-fired actions (consistent with the GEN-03 "no auto-regenerate on edit" decision) |
+
+## Feature Dependencies
+
+```
+[generationLocked (existing global lock)]
+    └──gates──> [Yellow "Generate Preview" state's clickability]
+    └──gates──> [Batch "Generate All" disabled state]
+                       (unchanged by this milestone — reuse as-is)
+
+[GenerationStatus enum: pending/queued/generating/complete/error]
+    └──maps-to──> [3-color button state]
+                       pending/queued  → yellow
+                       generating      → red
+                       complete        → green
+                       error           → yellow (treated as "needs regen", not a 4th color)
+
+[Per-row/per-character/batch Stop click]
+    └──requires──> [existing cancelBatchGeneration-style backend endpoint, extended to per-row/per-character scope]
+                       └──constrained-by──> [current best-effort-only cancellation semantics]
+
+[Config panel model-size dropdown]
+    └──conflicts-with──> [generationLocked being active]
+                       (switching models mid-generation would be undefined —
+                       disable the dropdown while any generation is in flight,
+                       same guard already used elsewhere in ConfigPanel)
+
+[Blue "Download" button]
+    └──requires──> [project.output_path populated, i.e. join already completed]
+    └──enhances──> [existing joined-output flow — no new backend join logic needed]
+
+[Green "Play" for joined file]
+    └──requires──> [same output_path as Download]
+    └──reuses──> [existing <audio> play/pause pattern from GeneratePlayButton/CharacterCard]
+```
+
+### Dependency Notes
+
+- **Button color state requires the `GenerationStatus` enum, not a new client-side status model.** The backend enum already distinguishes every state the button needs; this is a rendering change (`STATUS_BADGE` → button variant), not a new data model.
+- **The 3-state button conflicts with, and must respect, the existing `generationLocked` app-wide single-flight lock.** Yellow "Generate Preview" must stay non-clickable (or route to a disabled/locked visual) whenever `generationLocked` is true and this particular row/character isn't the one running — exactly the existing `isDisabled = isRowGenerating || (!hasAudio && generationLocked)` logic in `GeneratePlayButton`, extended with the red state instead of a spinner-and-disable.
+- **Stop enhances but does not replace the lock.** The lock still prevents a *second* generation from starting; Stop is about ending the *first* one early. These are two different mechanisms and both need to keep working together — don't let adding Stop weaken the existing race protection.
+- **Model-size dropdown conflicts with an in-flight generation** — switching the resident model while a generation is running is undefined behavior for a single-VRAM-budget load-on-demand setup (PROJECT.md: "only one resident in VRAM at a time"). The dropdown should reuse `generationLocked` as its own disabled-condition, the same dependency every other generate-triggering control already has.
+
+## MVP Definition
+
+### Launch With (v1.1, per PROJECT.md milestone scope)
+
+- [ ] 3-column segment table (Narrator / Voice Instructions / Text), Status badge column removed — table-stakes simplification, zero new backend work
+- [ ] Single 3-state color button (yellow/red/green) applied identically to per-row, per-character-preview, and batch Generate All — table stakes for this milestone's stated goal; reuses existing `GenerationStatus`/`generationLocked` machinery
+- [ ] Edit-invalidates-to-yellow behavior wired to the color button (already backend-supported via GEN-03) — table stakes, no new logic
+- [ ] Config panel: model-size dropdown (1.7B/0.6B, disabled while `generationLocked`), output-format dropdown (FLAC/MP3/Opus, WAV dropped), editable output-filename text field — table stakes per milestone brief
+- [ ] Blue Download + green Play for the joined output file, gated on `output_path` existing — table stakes per milestone brief
+
+### Add After Validation (v1.x)
+
+- [ ] Plain-language tradeoff labels on the model dropdown ("Higher quality" / "Faster") instead of just size numbers — nice differentiator, trivial to add once the dropdown exists, not required for the milestone's stated goal
+- [ ] "Stopping…" transitional label distinct from the steady-state red, if user testing shows the red→idle transition on Stop feels laggy given the best-effort backend cancellation — only build if the existing pattern (already shipped in `ConfigPanel.tsx`'s `isCancelling`) proves insufficient once extended to per-row scope
+
+### Future Consideration (v2+)
+
+- [ ] True mid-inference hard-kill of the GPU call (vs. today's stop-before-next-segment) — genuinely hard backend problem (interrupting a synchronous `transformers.generate()` call), explicitly out of scope for a UX-pattern milestone; revisit only if the best-effort stop proves unacceptable in real use
+- [ ] Auto-play or auto-download on batch completion — anti-feature per research above; keep user-triggered
+
+## Feature Prioritization Matrix
+
+| Feature | User Value | Implementation Cost | Priority |
+|---------|------------|---------------------|----------|
+| 3-color generate/stop/play button (all 3 scopes) | HIGH | MEDIUM (mostly rendering + wiring existing state, but touches 3 components) | P1 |
+| Drop Status badge column, trim table to 3 columns | MEDIUM | LOW | P1 |
+| Model-size dropdown | MEDIUM | LOW (frontend) / MEDIUM (backend: load-on-demand swap logic already implied by PROJECT.md, may be partly built) | P1 |
+| Output-format dropdown (FLAC/MP3/Opus) | MEDIUM | LOW | P1 |
+| Editable output filename | LOW-MEDIUM | LOW | P1 |
+| Download + Play for joined file | HIGH | LOW (mostly reuses existing patterns) | P1 |
+| Plain-language model labels | LOW | LOW | P2 |
+| "Stopping…" transitional microstate | LOW | LOW | P3 |
+| True immediate GPU-call kill | MEDIUM | HIGH | P3 (v2+) |
+
+**Priority key:**
+- P1: Must have for this milestone (matches PROJECT.md's stated v1.1 target features exactly)
+- P2: Should have, cheap to add once P1 lands
+- P3: Nice to have / explicitly deferred to a future milestone
+
+## Sources
+
+- [State-Switch Controls: The Infamous Case of the "Mute" Button — NN/G](https://www.nngroup.com/articles/state-switch-buttons/) — icon+label+color state legibility guidance, MEDIUM confidence (authoritative UX research org, cross-checked)
+- [Cancel vs Close: Design to Distinguish the Difference — NN/G](https://www.nngroup.com/articles/cancel-vs-close/)
+- [Button UX Design: Best Practices, Types and States — UX Planet](https://uxplanet.org/button-ux-design-best-practices-types-and-states-647cf4ae0fc6)
+- [How to design nondestructive cancel buttons — LogRocket Blog](https://blog.logrocket.com/ux-design/how-to-design-nondestructive-cancel-buttons/)
+- [Model Selector Pattern — UX Patterns for Developers](https://uxpatterns.dev/patterns/ai-intelligence/model-selector) — plain-language labeling / progressive disclosure for model choice, MEDIUM confidence
+- [AI UX Patterns | Parameters — ShapeofAI.com](https://www.shapeof.ai/patterns/parameters)
+- [Carbon Design System — Export pattern](https://carbondesignsystem.com/community/patterns/export-pattern/) — download-when-ready/editable-filename pattern, MEDIUM confidence
+- [How best to prevent double button clicks and duplicate/parallel mutations — TanStack/query Discussion #10041](https://github.com/TanStack/query/discussions/10041) — lock-before-request race-condition pattern, MEDIUM confidence
+- [Preventing Double Form Submission — The Art of Web](https://www.the-art-of-web.com/javascript/doublesubmit/)
+- Codebase inspection (HIGH confidence, primary source): `frontend/src/hooks/useGenerationLock.ts`, `frontend/src/components/SegmentTable.tsx`, `frontend/src/components/ConfigPanel.tsx` — existing `generationLocked`, `GenerationStatus`, best-effort batch Stop, and `GeneratePlayButton` generate/play double-duty pattern this milestone extends
+
+---
+*Feature research addendum for: Generation-control UX and config-panel capabilities, Qwen Ebook Narrator v1.1*
+*Researched: 2026-07-13*

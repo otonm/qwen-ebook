@@ -13,6 +13,11 @@ Grok-family model with a large context window was chosen for this task); the
 `xai-sdk` rows/install command are superseded — see `backend/app/analysis_client.py`
 and `CLAUDE.md`'s stack table for the current implementation.
 
+**Update (2026-07-13, v1.1 milestone):** See the **"v1.1 Addendum"** section at
+the end of this file for the new research needed for generation-control
+(immediate cancellation) and config-panel (dual model swap, FLAC/Opus output)
+capabilities. Everything above this addendum is unchanged v1.0 research.
+
 ## Recommended Stack
 
 ### Core Technologies
@@ -74,13 +79,13 @@ npm install -D tailwindcss @tailwindcss/vite
 | Recommended | Alternative | When to Use Alternative |
 |-------------|-------------|-------------------------|
 | Qwen3-TTS-1.7B-CustomVoice | Qwen3-TTS-1.7B-VoiceDesign | Use VoiceDesign if you want to *generate a brand-new voice from a free-text description* for a character with no good preset match, rather than steering one of the 9 presets. Worth wiring in as a secondary path for characters the CustomVoice presets don't fit well — the app's spec ("LLM/context-derived voice instructions for characters without a good preset match") maps naturally onto VoiceDesign as a fallback alongside CustomVoice as the default. |
-| Qwen3-TTS-1.7B-CustomVoice | Qwen3-TTS-0.6B-CustomVoice | Use the 0.6B variant if generation latency/throughput matters more than voice quality — it's faster and uses less VRAM, with headroom to spare either way on a 16GB card, so start with 1.7B for quality and only drop down if segment generation time becomes a bottleneck. |
+| Qwen3-TTS-1.7B-CustomVoice | Qwen3-TTS-0.6B-CustomVoice | Use the 0.6B variant if generation latency/throughput matters more than voice quality — it's faster and uses less VRAM, with headroom to spare either way on a 16GB card, so start with 1.7B for quality and only drop down if segment generation time becomes a bottleneck. **(v1.1: this tradeoff is now a first-class user-facing toggle — see the v1.1 Addendum below for the load/unload mechanics and a critical `instruct`-steering caveat on the 0.6B checkpoint.)** |
 | HF Transformers (`qwen-tts` pkg) | vLLM-Omni | Revisit vLLM once ROCm/RDNA4 (gfx1201) kernel support matures past "experimental" (watch ROCm release notes past 7.2) — worthwhile *only* if you need much higher throughput (e.g. batch-generating many segments concurrently), which a single-user sequential-review workflow doesn't require. |
 | FastAPI + SQLModel/SQLite | Node/Express or Django | Django is overkill (this app doesn't need its admin/ORM-migration machinery for ~3 tables); Node/Express would work but forces a second language boundary for no benefit — the TTS inference, ffmpeg orchestration, and EPUB parsing all want to live in Python next to `qwen-tts`/`torch` anyway. |
 | React + Vite (SPA) | Next.js | Use Next.js only if you anticipate needing SSR/streaming HTML or plan to expose this beyond a private Tailscale single-user tool — neither applies here, and Next.js's server runtime adds an extra process/complexity for no real gain in this context. |
 | React + TanStack Table | htmx + Alpine.js | A lightweight htmx-based UI is a legitimate alternative if you want to minimize frontend build tooling entirely — but the row-level interactivity (dropdowns bound to a dynamic character list, per-row async regenerate-and-rejoin, live status badges) is meaningfully easier to keep consistent client-side with React state than by round-tripping partial HTML swaps for every edit. |
 | ffmpeg concat demuxer via subprocess | `pydub` | Use pydub only for quick prototyping/exploration in a notebook — not recommended for the production join path (unmaintained, adds overhead, no benefit over calling ffmpeg directly for a same-codec concat). |
-| SSE (`fastapi.sse.EventSourceResponse`) | WebSockets | Switch to WebSockets only if you later want bidirectional real-time features (e.g. live collaborative editing, or the client cancelling/reordering the generation queue mid-stream in a chatty way) — not needed for one-way progress push to a single client. |
+| SSE (`fastapi.sse.EventSourceResponse`) | WebSockets | Switch to WebSockets only if you later want bidirectional real-time features (e.g. live collaborative editing, or the client cancelling/reordering the generation queue mid-stream in a chatty way) — not needed for one-way progress push to a single client. **(v1.1: instant cancellation is now a requirement — see the v1.1 Addendum; this is still solvable without WebSockets, see below.)** |
 
 ## What NOT to Use
 
@@ -113,7 +118,7 @@ npm install -D tailwindcss @tailwindcss/vite
 | Package A | Compatible With | Notes |
 |-----------|-----------------|-------|
 | `torch` (rocm7.2 wheel) | ROCm 7.2.x driver/userspace on host + `rocm/pytorch:rocm7.2.4_ubuntu24.04_py3.12_pytorch_2.10.0*` container base | Match the container's ROCm userspace version family to the host kernel driver; mismatches between container ROCm version and host driver are the most common source of "GPU not detected" issues reported in community threads. |
-| `qwen-tts` pip package | `transformers` + `torch` versions it pins (check `pyproject.toml`/`requirements.txt` at install time — pin exact versions once you install, since this is a very new, fast-moving package as of early 2026) | Because `qwen-tts` had only ~7 releases since its Jan 2026 debut, expect breaking changes between minor versions; pin the exact version in the container image rather than tracking latest. |
+| `qwen-tts` pip package | `transformers` + `torch` versions it pins (check `pyproject.toml`/`requirements.txt` at install time — pin exact versions once you install, since this is a very new, fast-moving package as of early 2026) | Because `qwen-tts` had only ~7 releases since its Jan 2026 debut, expect breaking changes between minor versions; pin the exact version in the container image rather than tracking latest. **(v1.1: pinned to exactly `qwen-tts==0.1.1` / `transformers==4.57.3` / `accelerate==1.12.0` in the shipped `Containerfile.tts` — see the v1.1 Addendum for a behavior verified directly against this exact pin that would need re-checking on any version bump.)** |
 | FastAPI ≥0.135 | Native `fastapi.sse.EventSourceResponse` | If pinning an older FastAPI (<0.135) for any reason, use `sse-starlette` instead — same conceptual API, mature and stable. |
 | OpenRouter model slug `OPENROUTER_MODEL` | Any OpenRouter-listed model id (`x-ai/grok-4.3`, `x-ai/grok-4.5`, etc. — confirm current slugs/context windows/pricing at `openrouter.ai/x-ai` or the relevant provider page at implementation time) | `x-ai/grok-4.3` (1M context) is the default — it preserves this app's original single-shot-analysis assumption (D-06's ~50%-of-context safety margin over a full novel's text). Any other OpenRouter model that supports `response_format: json_schema` strict mode can be swapped in via the env var without a code change. |
 
@@ -144,3 +149,124 @@ npm install -D tailwindcss @tailwindcss/vite
 ---
 *Stack research for: self-hosted ebook-to-audiobook narration web app*
 *Researched: 2026-07-09*
+
+---
+
+# v1.1 Addendum: Generation Control + Config Panel
+
+**Scope:** New stack needed for (a) truly interrupting an in-flight `model.generate()` call, (b) load-on-demand swap between the 1.7B and 0.6B CustomVoice checkpoints within the 16GB VRAM budget, (c) FLAC/Opus output alongside the existing MP3 path.
+**Researched:** 2026-07-13
+**Confidence:** HIGH for (a) and (b) — verified by directly reading the production container's installed `qwen-tts==0.1.1` / `transformers==4.57.3` source (see below), not just docs/blogs. MEDIUM for (c) — well-established ffmpeg behavior, cross-checked across multiple sources but not run locally (no `ffmpeg` binary in this dev sandbox; verify once on the deploy VM where it already runs).
+
+## Critical finding: `qwen-tts==0.1.1` silently drops `stopping_criteria` — plan around it, don't assume it works
+
+Read directly from the production container image's installed wheel
+(`/opt/venv/lib/python3.12/site-packages/qwen_tts/`, `rocm/pytorch:rocm7.2.4_ubuntu24.04_py3.12_pytorch_release_2.9.1` base per `Containerfile.tts`):
+
+- `Qwen3TTSModel.generate_custom_voice(**kwargs)` → `_merge_generate_kwargs(**kwargs)` → `self.model.generate(**gen_kwargs)`. This outer `generate()` (`Qwen3TTSForConditionalGeneration.generate`, `modeling_qwen3_tts.py:2022`) declares `**kwargs` in its signature but **never merges it into `talker_kwargs`** — the dict it actually forwards to the real HF generation call is hardcoded (`max_new_tokens`, `do_sample`, `top_k`, etc. only). Any extra kwarg passed through the public API (e.g. `stopping_criteria=StoppingCriteriaList(...)`) is silently swallowed. This is a bug/limitation in the pip package itself, not something you're doing wrong.
+- The real per-token generation loop is `self.talker.generate(inputs_embeds=..., attention_mask=..., trailing_text_hidden=..., tts_pad_embed=..., **talker_kwargs)` at `modeling_qwen3_tts.py:2272`. `self.talker` is `Qwen3TTSTalkerForConditionalGeneration(Qwen3TTSTalkerTextPreTrainedModel, GenerationMixin)` — a genuine `transformers.GenerationMixin` subclass, so **its** `.generate()` *does* honor `stopping_criteria` exactly like any other HF causal LM.
+- Consequence: the only way to get `StoppingCriteria`-based early stop working with this exact package version is to **monkeypatch the bound method on the loaded model instance** — wrap `model.model.talker.generate` (the inner talker, not the outer `Qwen3TTSModel` wrapper) so it injects `stopping_criteria=<your list>` into every call before delegating to the original. This is a small, self-contained ~10-line patch applied once at model-load time in `tts_service/model.py`; it does not require forking the package and survives package upgrades as long as `self.talker.generate(**talker_kwargs)`'s call shape doesn't change (pin `qwen-tts==0.1.1` exactly, as the project already does — re-verify this patch on any version bump).
+- Also verified in the same file: `if self.model.tts_model_size in "0b6": instruct = None` (`qwen3_tts_model.py:799`) — **the 0.6B CustomVoice checkpoint silently disables free-text `instruct` voice steering entirely**, regardless of what the caller passes. This is a real UX regression when a user switches down to 0.6B: every segment's "Voice Instructions" text will simply have no effect. Surface this in the Config Panel (e.g. a warning next to the 0.6B option) — don't let it fail silently in the UI too.
+
+## Recommended Stack
+
+### (a) Immediate cancellation of an in-flight generate() call
+
+| Technology | Version | Purpose | Why Recommended |
+|------------|---------|---------|-----------------|
+| `transformers.StoppingCriteria` / `StoppingCriteriaList` | pinned `transformers==4.57.3` (already pinned in `Containerfile.tts`) | Check a cancel flag between autoregressive steps of the talker's HF `generate()` loop | `StoppingCriteria.__call__(input_ids, scores)` runs once per generated token/frame, not once per whole call — for a several-hundred-frame segment this bounds worst-case cancel latency to roughly one forward pass (tens of ms), which is what "immediately cancellable" actually requires. It's the only mechanism that can interrupt *inside* `model.generate()` without killing the process (and thus the resident model) |
+| A bound-method monkeypatch on `model.model.talker.generate` in `backend/tts_service/model.py` | project code, no new dependency | Bridge the outer `qwen-tts` wrapper's dropped `**kwargs` to the inner real `GenerationMixin.generate()` that does honor `stopping_criteria` | Verified necessary above — passing `stopping_criteria=` through the public `generate_custom_voice()` API is silently a no-op with this package version |
+| `threading.Event` (stdlib) | — | The actual cancel flag the custom `StoppingCriteria` checks each call | One global event is enough — the app already enforces a single global generation slot (`generation_worker.try_claim_generation`), so only one synth call is ever in flight at a time. No per-request id, no asyncio primitives needed inside `tts_service` (the synth call runs in a plain thread via `run_in_threadpool`, so a plain `threading.Event`, not `asyncio.Event`, is what the worker thread can actually see and clear cheaply) |
+| A `POST /cancel` route added to `tts_service/server.py` | — | Lets the main backend's existing `/generate/cancel` reach across the HTTP boundary and flip the flag | The TTS container is a *separate* process/pod from the main backend (`Containerfile.tts` vs `Containerfile.backend`, talking over `TTS_SERVICE_URL`/httpx — confirmed in `app/tts_client.py`). The main backend's current cancel path (`app/main.py::cancel_generation`) only stops the *next* segment from starting; it cannot reach into the TTS container's in-flight thread at all today. This route is the missing link — reset the event to "not cancelled" at the start of every `/synthesize` call, set it on `/cancel`, and have the injected `StoppingCriteria` return `True` once set |
+
+**What NOT to do for (a):**
+- Don't reach for `asyncio.Task.cancel()` on the FastAPI side as the actual interrupt mechanism — it only ever cancels the *waiting*, not the blocking synchronous call already running in a threadpool worker thread on the other side of an HTTP call. This is exactly the limitation the existing `# ponytail:` comment in `app/main.py::cancel_generation` already documents; the fix has to live in `tts_service`, not in the main backend.
+- Don't spawn a subprocess per synth call to get "real" killability. Because the model must stay resident to avoid the 1-2 minute reload cost (documented anti-pattern already called out at the top of `tts_service/model.py`), a fresh subprocess per call would mean reloading the model every time — that's strictly worse than the current architecture, not an upgrade.
+- Don't add a task queue (Celery/RQ/etc.) for this. Single GPU, single user, one generation slot already enforced in-process — a queue adds infra (a broker) to solve a problem a `threading.Event` already solves.
+
+### (b) Loading/unloading between the two model sizes without leaking VRAM
+
+| Technology | Version | Purpose | Why Recommended |
+|------------|---------|---------|-----------------|
+| `Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice` | HF repo, same family as the currently-pinned 1.7B checkpoint | The second model size the milestone wants selectable | Confirmed to exist on the Hub (Apache-2.0, `QwenLM/Qwen3-TTS`) and to load through the exact same `Qwen3TTSModel.from_pretrained(...)` / `generate_custom_voice(...)` call shape as the 1.7B model already in `tts_service/model.py` — no new wrapper code needed, just a different `MODEL_NAME` |
+| `del <old model/processor refs>; gc.collect(); torch.cuda.empty_cache()` (stdlib `gc` + `torch.cuda`, no new dependency) | — | Release the previously-loaded checkpoint's VRAM before loading the other one | This is the standard, well-documented PyTorch pattern (PyTorch forums, HF forums) for releasing a caching-allocator's held blocks back to the driver. `torch.cuda.*` calls transparently map to HIP on a ROCm PyTorch build (same public API, same semantics) — no ROCm-specific replacement API exists or is needed |
+| A module-level `threading.Lock` around "swap model" + "synthesize" in `tts_service/model.py` | stdlib | Serialize model-swap against an in-flight synth call | The module currently holds `model` as a bare global reassigned at import time only; once it becomes swappable at runtime, a synth call reading `model` mid-swap (or a swap starting mid-synth) would segfault/produce garbage. Reuse the same single-flight discipline the main backend already has (`generation_worker.try_claim_generation`) — extend "swap model" to also require the global generation slot, so a model switch can never race a synth call |
+
+**Concrete swap sequence** (what actually needs to happen in `tts_service/model.py`, informed by the module's current structure — it loads the model once at import time as a bare global):
+
+1. Acquire the lock.
+2. `del model` (drop the last reference to the `Qwen3TTSModel` wrapper — its inner `.model` holds the actual `nn.Module` weights).
+3. `gc.collect()` then `torch.cuda.empty_cache()` — frees the caching allocator's now-unused blocks back to the driver.
+4. `Qwen3TTSModel.from_pretrained(NEW_MODEL_NAME, device_map="cuda:0", dtype=torch.bfloat16, attn_implementation="sdpa")` — identical kwargs to the existing load, just a different repo id.
+5. Re-apply the `StoppingCriteria` monkeypatch from (a) to the freshly-loaded instance's `model.talker.generate` (it's a fresh object each load, the patch doesn't persist across `from_pretrained`).
+6. Re-derive `DEFAULT_SPEAKER` from the new model's `get_supported_speakers()` — the 0.6B and 1.7B checkpoints are not guaranteed to expose an identical speaker list.
+7. Release the lock.
+
+**Known limitation to document, not solve:** `torch.cuda.empty_cache()` returns *unused cached* memory to the driver; it does not guarantee every byte is reclaimed if something still holds a stray reference (a common complaint on the PyTorch/HF forums). Practical mitigation: keep the reload sequence tight (no partial-init state held across the `del`/reload boundary) and, if VRAM ever visibly fails to fully release across repeated swaps in practice, add a `torch.cuda.memory_allocated()` / `memory_reserved()` log line around the swap so it's observable rather than guessed at — don't pre-build a leak-detection system for a problem not yet confirmed to occur (1.7B bf16 ≈ 3.4GB weights, 0.6B bf16 ≈ 1.2GB, both individually far under the 16GB budget with generous headroom, so a small amount of unreclaimed cache is very unlikely to matter here).
+
+**What NOT to do for (b):**
+- Don't keep both models resident simultaneously "for speed" — the milestone explicitly wants only one loaded at a time, and both models comfortably fit the 16GB budget individually so there's no forced tradeoff being made here, just the stated product requirement.
+- Don't build a generic "model registry" abstraction for two hardcoded model ids. A `MODEL_CHOICES = {"1.7b": "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice", "0.6b": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"}` dict plus the swap function above is the whole feature — add a real registry only if a third size ever ships.
+
+### (c) FLAC and Opus output alongside the existing MP3 path
+
+| Technology | Version | Purpose | Why Recommended |
+|------------|---------|---------|-----------------|
+| ffmpeg native `flac` encoder (`-c:a flac`) | whatever ffmpeg build already runs on the deploy VM (`audio_join.py` already shells out to system `ffmpeg`) | Lossless output format option | Built into every standard ffmpeg build (not an external lib like `libopus`/`libmp3lame`) — no new package to install in `Containerfile.backend` |
+| `libopus` (`-c:a libopus`) | same ffmpeg build | Opus output format option | The de facto standard lossy codec for speech at low bitrate; standard ffmpeg builds bundle it (already true for `libmp3lame`, which the project depends on today, so the build almost certainly has `libopus` too — confirm with `ffmpeg -encoders \| grep opus` on the deploy VM before shipping, since this dev sandbox has no `ffmpeg` binary to check directly) |
+
+**Recommended flags**, extending `audio_join.py`'s existing `codec_args` branch (currently `["-c", "copy"]` for wav / `["-c:a", "libmp3lame"]` for mp3):
+
+```python
+codec_args = {
+    "flac": ["-c:a", "flac", "-compression_level", "8"],
+    "opus": ["-c:a", "libopus", "-b:a", "48k", "-vbr", "on", "-application", "voip"],
+    "mp3": ["-c:a", "libmp3lame"],  # unchanged
+}[fmt]
+```
+
+- **FLAC** is lossless — no bitrate flag. `-compression_level` (0-12, ffmpeg's native flac encoder) trades encode time for file size only; `8` is a reasonable "small enough, still fast" default. Since this is a one-shot offline batch join (not real-time), `12` (max) is also safe if smaller files matter more than shaving a few seconds off the join step — not worth exposing as a user-facing setting for a single-user tool.
+- **Opus**: `-application voip` switches libopus's internal mode toward speech intelligibility (SILK-leaning) rather than general audio fidelity — the right choice for narrated text, not music. `48k` mono/typical narration bitrate lands in the range multiple sources describe as "essentially indistinguishable from higher bitrates" for spoken word; `-vbr on` (already the libopus default) lets the encoder spend fewer bits on silence between segments.
+- **Force the muxer explicitly, don't rely on the output filename's extension.** This milestone also adds a *user-editable output filename* — if a user types `"my_book"` (no extension) or `"my_book.mp3"` while FLAC is selected, ffmpeg's extension-sniffed muxer choice would silently produce the wrong container or fail outright. Add `-f flac` / `-f opus` / `-f mp3` explicitly to the ffmpeg invocation (matching the `fmt` param, independent of whatever `out_path`'s suffix is) so codec selection and container selection can never disagree with each other or with a user-supplied filename. Have the backend still append the canonical extension itself when building `out_path` from the user's filename — don't trust the client to get the extension right, but also don't depend on it being right.
+- No changes needed to `audio_join.py`'s concat-demuxer/subprocess-argument-list approach (T-01-03's no-shell discipline) — this is purely a bigger `codec_args` lookup table plus the explicit `-f` flag, not a different join strategy.
+
+**What NOT to do for (c):**
+- Don't use ffmpeg's native experimental `opus` encoder (`-c:a opus`, no `lib` prefix) — it exists but is generally considered lower quality / less mature than `libopus` for the same bitrate; always prefer `libopus` explicitly.
+- Don't drop WAV support from `audio_join.py`'s function signature/tests just because the milestone drops it from the *product's* selectable formats — leave the `"wav"` branch alone unless a later cleanup pass explicitly wants it gone; this milestone's actual requirement is adding FLAC/Opus and dropping WAV *from the UI*, not necessarily scrubbing every WAV code path.
+
+## Alternatives Considered (v1.1)
+
+| Recommended | Alternative | When to Use Alternative |
+|-------------|-------------|--------------------------|
+| Monkeypatched `StoppingCriteria` for (a) | Kill/restart the whole `tts_service` process (container) on cancel | Only if the monkeypatch route turns out to be fragile against a future `qwen-tts` upgrade — but a full process restart re-pays the 1-2 minute model load on every single cancel, which fails the "immediately usable again" half of the UX goal just as badly as not cancelling at all |
+| Monkeypatched `StoppingCriteria` for (a) | Fork `qwen-tts` and patch `Qwen3TTSForConditionalGeneration.generate()` upstream in a vendored copy | Only worth it if the project needs other changes to the generation loop too — for cancellation alone, patching one bound method at load time is a far smaller footprint than vendoring and maintaining a fork |
+| `del` + `gc.collect()` + `torch.cuda.empty_cache()` for (b) | `subprocess`-per-model-size, always running both as separate long-lived processes and routing by which is "warm" | Only makes sense if VRAM had headroom for both simultaneously (it does here) *and* switch latency needed to be near-zero — the milestone explicitly wants only one resident at a time, so this doesn't apply |
+| `libopus` for (c) | AAC (`libfdk_aac` / native `aac`) | Not requested by this milestone (FLAC/MP3/Opus only) and typically not bundled as GPL-free in default ffmpeg builds the way libopus is — skip unless a future requirement asks for it |
+
+## What NOT to Use (v1.1)
+
+| Avoid | Why | Use Instead |
+|-------|-----|--------------|
+| Celery / RQ / any task queue for cancellation or model-swap orchestration | Single GPU, single user, already-enforced single-flight generation slot in-process — a queue adds a broker dependency to solve a problem `threading.Event` + an existing lock already solve | The existing `generation_worker.try_claim_generation` pattern, extended with a `threading.Event`-based cancel flag |
+| `pydub` for FLAC/Opus encoding | Already excluded project-wide per `CLAUDE.md` (unmaintained; project calls ffmpeg directly) | Extend `audio_join.py`'s existing `subprocess.run([...ffmpeg args...])` codec table |
+| ffmpeg's native `opus` encoder (no `lib` prefix) | Lower quality/maturity than `libopus` at equivalent settings | `-c:a libopus` |
+
+## Version Compatibility (v1.1)
+
+| Package | Compatible With | Notes |
+|---------|------------------|-------|
+| `qwen-tts==0.1.1` | `transformers==4.57.3`, `accelerate==1.12.0` (exact pins already in `Containerfile.tts`) | The `stopping_criteria` monkeypatch's correctness depends on the exact call shape at `modeling_qwen3_tts.py:2272` (`self.talker.generate(inputs_embeds=..., attention_mask=..., trailing_text_hidden=..., tts_pad_embed=..., **talker_kwargs)`) — re-verify this line by re-reading the installed wheel before bumping `qwen-tts`'s version pin |
+| `Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice` | Same `qwen_tts.Qwen3TTSModel.from_pretrained()` / `generate_custom_voice()` call shape as the 1.7B checkpoint already in use | No `qwen-tts` package changes needed to add the second model — only a second `MODEL_NAME` constant and the swap logic in (b) |
+| ffmpeg `libopus` | Standard ffmpeg builds (already relying on `libmp3lame` being present) | Confirm on the deploy VM with `ffmpeg -encoders \| grep -E "opus\|flac"` before shipping — this research could not run `ffmpeg` locally (no binary in the dev sandbox) |
+
+## Sources (v1.1)
+
+- Direct inspection of the production container's installed `qwen-tts==0.1.1` source (`/opt/venv/lib/python3.12/site-packages/qwen_tts/inference/qwen3_tts_model.py`, `qwen_tts/core/models/modeling_qwen3_tts.py`) — HIGH confidence, primary source (the actual code that runs in production), not a claim from documentation or search
+- `backend/tts_service/model.py`, `backend/tts_service/server.py`, `backend/app/tts_client.py`, `backend/app/main.py`, `backend/Containerfile.tts` (this repo) — confirms the existing two-process/two-container architecture, the existing best-effort cancel's documented limitation, and the exact pinned versions
+- WebSearch: "cancel interrupt Hugging Face transformers model.generate() ... StoppingCriteria" — LOW confidence per `classify-confidence` (unverified web), but consistent with and confirmed by the direct source read above
+- WebSearch: "PyTorch del model torch.cuda.empty_cache gc.collect free GPU memory swap models VRAM leak" — LOW confidence, standard/well-known pattern, cross-checked across PyTorch Forums + HF Forums + GeeksforGeeks
+- WebSearch: "ffmpeg libopus flac encoder recommended bitrate voice spoken word audiobook" and "ffmpeg -c:a libopus ... -application voip ... flac ffmpeg example command" — LOW confidence per `classify-confidence` (unverified web, and this sandbox has no `ffmpeg` binary to directly confirm flag names); cross-checked across ffmpeg's own codecs documentation description plus two independent Opus bitrate guides — verify flag names once against `ffmpeg -h encoder=libopus` / `encoder=flac` on the deploy VM before merging
+- `https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice` — confirms the second checkpoint's existence and Hub repo id
+
+---
+*v1.1 addendum researched: 2026-07-13*
