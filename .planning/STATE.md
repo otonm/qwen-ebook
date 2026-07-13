@@ -31,7 +31,7 @@ See: .planning/PROJECT.md (updated 2026-07-11)
 Phase: Milestone v1.0 complete
 Plan: —
 Status: Awaiting next milestone
-Last activity: 2026-07-12 — Milestone v1.0 completed and archived
+Last activity: 2026-07-13 - Completed quick task 260713-dye (tasks 1-4): Rework the presets feature into 5 fixed voice personas — human-verify checkpoint pending
 
 ## Performance Metrics
 
@@ -95,6 +95,7 @@ None yet.
 |---|-------------|------|--------|-----------|
 | 260709-vde | Simplify CLAUDE.md: remove cruft now that Phase 1 is built | 2026-07-09 | 08769f9 | [260709-vde-simplify-claude-md-remove-cruft-now-that](./quick/260709-vde-simplify-claude-md-remove-cruft-now-that/) |
 | 260709-vlc | Prepare deploy tooling for bringing up the production RX 9070 XT VM (Debian 13, Tailscale SSH) | 2026-07-09 | a8d4461 | [260709-vlc-prepare-deploy-tooling-for-bringing-up-t](./quick/260709-vlc-prepare-deploy-tooling-for-bringing-up-t/) |
+| 260713-dye | Rework the presets feature: 5 fixed voice presets the LLM casts/adapts per character, merged with per-segment delivery instructions at TTS time (tasks 1-4 done; human-verify checkpoint pending) | 2026-07-13 | 517a081 | [260713-dye-rework-the-presets-feature-5-fixed-voice](./quick/260713-dye-rework-the-presets-feature-5-fixed-voice/) |
 
 ## Deferred Items
 
