@@ -47,6 +47,24 @@ def main() -> int:
 
     print(f"LONG_TEXT length: {len(LONG_TEXT)} chars")
 
+    # --- Warmup: one throwaway synth of the SAME LONG_TEXT, excluded from
+    # all timing. MIOpen (ROCm's kernel library) does exhaustive kernel
+    # autotuning the FIRST time it sees a given op/shape on this process (no
+    # cached kernel db entry yet) — confirmed live on this hardware: an
+    # unwarmed first call logged repeated "MIOpen(HIP): Warning
+    # [IsEnoughWorkspace] ... GemmFwdRest" autotune lines with GROWING
+    # workspace sizes tied to the growing decode-step sequence length, and
+    # took ~15 minutes for 3900 chars vs. a normal steady-state decode. A
+    # short warmup text only tunes shapes up to ITS shorter length, leaving
+    # the timed baseline to still hit fresh (slow) shapes past that point —
+    # so the warmup text must be identical to LONG_TEXT to guarantee full
+    # shape coverage before anything is timed.
+    print("Warming up model (first-call ROCm/MIOpen kernel autotune, excluded from timing)...")
+    warmup_start = time.monotonic()
+    model.synthesize_wav(LONG_TEXT)
+    warmup_elapsed_ms = (time.monotonic() - warmup_start) * 1000
+    print(f"Warmup synth time (excluded from measurements): {warmup_elapsed_ms:.1f} ms")
+
     # --- Baseline: full synth, no cancel ---
     print("Running baseline (uncancelled) synth...")
     baseline_start = time.monotonic()
