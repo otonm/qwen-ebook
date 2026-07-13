@@ -100,6 +100,12 @@ async def synthesize(req: SynthesizeRequest) -> Response:
     if not req.text or not req.text.strip():
         return Response(status_code=422, content="text must not be empty")
 
+    # Imported here (not at module top level) to preserve the same lazy-load
+    # discipline as _model_module itself — tts_service.model is already
+    # loaded by this point (lifespan set _model_module above), so this just
+    # binds the name from the cached module, no second model load.
+    from tts_service.model import GenerationCancelled
+
     try:
         # CR-02: synthesize_wav() is a synchronous, GPU-bound call that can
         # take a long time per chunk. Running it directly on the event loop
@@ -113,6 +119,15 @@ async def synthesize(req: SynthesizeRequest) -> Response:
         # (T-02-01: qwen-tts's own get_supported_speakers()-backed
         # validation raises ValueError; we surface it as a client error).
         return Response(status_code=400, content=str(exc))
+    except GenerationCancelled:
+        # T-04-06: a deliberate POST /cancel-triggered stop must be
+        # distinguishable from a crash. 499 (Client Closed Request, the
+        # nginx/many-gateways convention for "request aborted by caller")
+        # is not in FastAPI's own vocabulary but is a well-understood
+        # non-500 signal; the backend maps it to a clean "cancelled" state
+        # rather than treating it as a synthesis failure.
+        logger.info("synthesis cancelled via /cancel — returning 499")
+        return Response(status_code=499, content="synthesis cancelled")
     except Exception:
         # Broad catch is deliberate: any other model/runtime failure should
         # surface as a clean 500 with a logged traceback, not an unhandled
@@ -121,3 +136,16 @@ async def synthesize(req: SynthesizeRequest) -> Response:
         return Response(status_code=500, content="synthesis failed")
 
     return Response(content=wav_bytes, media_type="audio/wav")
+
+
+@app.post("/cancel")
+async def cancel() -> Response:
+    """Best-effort, fire-and-forget: sets the cancel flag that the
+    in-flight /synthesize call's StoppingCriteria checks on its next
+    decode step (see tts_service/model.py). Does not wait for that call
+    to actually finish unwinding — the caller's own /synthesize request
+    unblocks itself once the decode loop observes the flag."""
+    if _model_module is None:
+        return Response(status_code=503, content="model not loaded")
+    _model_module.request_cancel()
+    return Response(status_code=202)
