@@ -1,7 +1,7 @@
 """Fixed voice-preset roster for the wizard's voice picker and the analysis
 LLM's casting pick (PRESET-REWORK).
 
-5 curated personas, each with a fleshed-out steering `description` the
+6 curated personas, each with a fleshed-out steering `description` the
 analysis LLM adapts per character (see analysis_client.py's system prompt,
 built from `preset_description()` so prompt and roster can't drift) and a
 `speaker` — the underlying Qwen CustomVoice speaker name that actually drives
@@ -76,6 +76,16 @@ PRESET_VOICES: list[dict] = [
             "pace and a calm, trustworthy emotional demeanor."
         ),
     },
+    {
+        "name": "gruff_older_man",
+        "label": "Gruff older man",
+        "keywords": ("old man", "older man", "elderly", "gruff", "gravelly"),
+        "speaker": "uncle_fu",
+        "description": (
+            "An older man with a gruff, weathered voice. Slower, deliberate "
+            "pace and a grounded, world-worn emotional demeanor."
+        ),
+    },
 ]
 
 _PRESET_BY_NAME: dict[str, dict] = {voice["name"]: voice for voice in PRESET_VOICES}
@@ -133,6 +143,6 @@ if __name__ == "__main__":
     assert preset_speaker("") == _DEFAULT_SPEAKER
     assert preset_speaker("not-a-real-preset") == _DEFAULT_SPEAKER
     assert preset_speaker(DEFAULT_PRESET) == _DEFAULT_SPEAKER
-    assert len(PRESET_VOICES) == 5
+    assert len(PRESET_VOICES) == 6
     assert best_guess_preset("") == DEFAULT_PRESET
     print("voices self-check passed")

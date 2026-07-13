@@ -30,14 +30,14 @@ _OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completion
 
 
 def _build_preset_roster_block() -> str:
-    """Renders the 5 fixed presets (id + description) from voices.py so the
+    """Renders the fixed presets (id + description) from voices.py so the
     prompt and PRESET_VOICES can't drift apart (PRESET-REWORK)."""
     lines = [f'- "{voice["name"]}": {voice["description"]}' for voice in PRESET_VOICES]
     return "\n".join(lines)
 
 
 # CAST-01/CAST-03: instructs Grok to (a) detect narrator + speaking cast
-# with inferred traits, cast each from the 5 fixed presets, and adapt the
+# with inferred traits, cast each from the fixed presets, and adapt the
 # picked preset's description to the character, (b) split the text into
 # ordered voice-tagged segments with dialogue-only delivery instructions,
 # and (c) reconcile confident cross-chunk character matches (D-08) when

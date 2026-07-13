@@ -9,7 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-# PRESET-REWORK: the 5 fixed preset ids from voices.py, duplicated here as a
+# PRESET-REWORK: the 6 fixed preset ids from voices.py, duplicated here as a
 # Literal (not imported) so this schema stays a plain, dependency-free
 # contract usable for OpenRouter's json_schema — analysis_client.py is the
 # module responsible for keeping the prompt's preset list in sync with
@@ -20,6 +20,7 @@ VoicePresetId = Literal[
     "playful_student",
     "bright_young_guy",
     "reassuring_young_man",
+    "gruff_older_man",
 ]
 
 
