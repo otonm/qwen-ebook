@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button"
 import { CharacterCard } from "@/components/CharacterCard"
 import { SegmentPreview } from "@/components/SegmentPreview"
 import { refreshProject } from "@/hooks/useAnalysisStream"
+import { useGenerationLock } from "@/hooks/useGenerationLock"
 
 interface CastWizardProps {
   projectId: string
@@ -31,6 +32,10 @@ export function CastWizard({ projectId, initialCast, initialSegments }: CastWiza
   const [cast, setCast] = useState(initialCast)
   const [segments, setSegments] = useState(initialSegments)
   const [voices, setVoices] = useState<VoicePreset[]>([])
+  // Global (app-wide) single-flight signal — only one generation may be in
+  // flight at a time, so every card's Generate button disables while any
+  // one of them (or a segment/batch elsewhere) is active.
+  const generationLocked = useGenerationLock()
   // Only the most recent merge can be undone — a new merge (or an
   // explicit dismiss) replaces/clears this, see undo-merge's ponytail note.
   const [pendingUndo, setPendingUndo] = useState<MergeUndoSnapshot | null>(null)
@@ -110,6 +115,7 @@ export function CastWizard({ projectId, initialCast, initialSegments }: CastWiza
               voices={voices}
               onCastRefresh={handleCastRefresh}
               onMerged={handleMerged}
+              generationLocked={generationLocked}
             />
           ))}
         </div>

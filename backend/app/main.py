@@ -47,9 +47,12 @@ from app.generation_worker import (
     generation_progress_events,
     get_generation_task,
     has_pending_generation_queue,
+    is_any_generation_active,
     is_generation_running,
     push_generation_event,
+    release_generation,
     run_batch_generation,
+    try_claim_generation,
 )
 from app.models import Character, Project, Segment
 from app.tts_client import synthesize, tts_health
@@ -64,6 +67,23 @@ _READ_CHUNK_SIZE = 1024 * 1024  # 1 MiB
 # footgun) — this set exists purely to hold a reference, per-task removal
 # via add_done_callback.
 _background_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_claimed_generation(coro) -> None:
+    """Wrap an already-claimed (try_claim_generation succeeded) generation
+    coroutine as a tracked background task. Releases the global single-
+    flight slot via the task's own done-callback regardless of how the
+    coroutine exits (success, an early return, or an exception) — every
+    _generate_preview call site funnels through this so the release can
+    never be forgotten on one of its several early-return branches."""
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+
+    def _cleanup(completed_task: asyncio.Task) -> None:
+        _background_tasks.discard(completed_task)
+        release_generation()
+
+    task.add_done_callback(_cleanup)
 
 
 @asynccontextmanager
@@ -342,6 +362,16 @@ async def get_voices() -> list[dict]:
     return list_presets()
 
 
+@app.get("/generation-status")
+async def get_generation_status() -> dict:
+    """Global single-flight signal (generation_worker.is_any_generation_active)
+    — polled by the frontend to disable every OTHER generation-triggering
+    control (per-row Generate, Generate All, character preview Generate)
+    while any one generation is in flight anywhere in the app, not just in
+    the current project."""
+    return {"active": is_any_generation_active()}
+
+
 class CharacterPatch(BaseModel):
     name: str | None = None
     description: str | None = None
@@ -460,20 +490,35 @@ async def trigger_character_preview(character_id: str) -> dict:
     null preview_audio_path, since that's otherwise the only path that ever
     calls _generate_preview. Bumps voice_version (same race guard
     _generate_preview already relies on) and kicks off preview generation
-    as a tracked background task — reuses _generate_preview as-is, same
-    create_task + _background_tasks pattern patch_character uses."""
+    as a tracked background task.
+
+    Rejected with 409 if any OTHER generation (a different character's
+    preview, a segment, or a batch run) is already using the single global
+    generation slot — see generation_worker.try_claim_generation. The lock
+    is checked BEFORE voice_version is bumped: bumping it on a rejected
+    request would invalidate a genuinely in-flight generation's own
+    last-request-wins race guard (Pitfall 5), discarding a result that was
+    never actually stale."""
+    with Session(engine) as session:
+        if session.get(Character, character_id) is None:
+            raise HTTPException(status_code=404, detail="Character not found")
+
+    if not try_claim_generation(f"preview:{character_id}"):
+        raise HTTPException(
+            status_code=409, detail="Another generation is already in progress"
+        )
+
     with Session(engine) as session:
         character = session.get(Character, character_id)
         if character is None:
+            release_generation()
             raise HTTPException(status_code=404, detail="Character not found")
         character.voice_version += 1
         session.add(character)
         session.commit()
         version = character.voice_version
 
-    task = asyncio.create_task(_generate_preview(character_id, version))
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+    _spawn_claimed_generation(_generate_preview(character_id, version))
 
     return {"status": "generating"}
 
@@ -631,12 +676,13 @@ async def undo_merge_character(body: UndoMergeRequest) -> dict:
         session.refresh(restored)
         result = _serialize_character(restored)
 
-    if character.had_preview:
-        task = asyncio.create_task(
-            _generate_preview(character.id, character.voice_version)
-        )
-        _background_tasks.add(task)
-        task.add_done_callback(_background_tasks.discard)
+    # Best-effort: this is an automatic side effect of undo, not an
+    # explicit user action, so a busy global slot is a silent skip (not a
+    # 409) — the restored character just keeps a null preview_audio_path
+    # until the user generates one manually via its now-visible Generate
+    # button.
+    if character.had_preview and try_claim_generation(f"preview:{character.id}"):
+        _spawn_claimed_generation(_generate_preview(character.id, character.voice_version))
 
     return result
 
@@ -810,19 +856,37 @@ async def generate_segment(segment_id: str) -> dict:
     batch run currently on this row) is rejected with 409 rather than
     starting a second concurrent regenerate_segment for the same row —
     that second call would race the first and get stomped by the worker's
-    stale-'generating' reset."""
+    stale-'generating' reset.
+
+    Also rejected with 409 if any OTHER generation (a different segment, a
+    batch run, or a character preview) already holds the single global
+    generation slot — checked BEFORE this row is flipped to "generating",
+    so a busy-reject never leaves it stuck in that state."""
     with Session(engine) as session:
         segment = session.get(Segment, segment_id)
         if segment is None:
             raise HTTPException(status_code=404, detail="Segment not found")
         if segment.generation_status == "generating":
             raise HTTPException(status_code=409, detail="Segment is already generating")
-        segment.generation_status = "generating"
-        session.add(segment)
-        session.commit()
-        version = segment.generation_version
 
-    await regenerate_segment(segment_id, version)
+    if not try_claim_generation(f"segment:{segment_id}"):
+        raise HTTPException(
+            status_code=409, detail="Another generation is already in progress"
+        )
+
+    try:
+        with Session(engine) as session:
+            segment = session.get(Segment, segment_id)
+            if segment is None:
+                raise HTTPException(status_code=404, detail="Segment not found")
+            segment.generation_status = "generating"
+            session.add(segment)
+            session.commit()
+            version = segment.generation_version
+
+        await regenerate_segment(segment_id, version)
+    finally:
+        release_generation()
 
     with Session(engine) as session:
         segment = session.get(Segment, segment_id)
@@ -896,13 +960,20 @@ async def generate_project(project_id: str) -> dict:
     run_batch_generation passes would race each other's row writes, and
     the worker's own crash-leftover stale-reset would misfire against
     genuinely in-flight rows. Still 202 (accepted, just not started) —
-    the frontend only needs the status string to tell the two cases apart."""
+    the frontend only needs the status string to tell the two cases apart.
+
+    Also rejected (as "busy") if any OTHER generation — a different
+    project's batch, a per-row segment, or a character preview — already
+    holds the single global generation slot (generation_worker)."""
     with Session(engine) as session:
         if session.get(Project, project_id) is None:
             raise HTTPException(status_code=404, detail="Project not found")
 
     if is_generation_running(project_id):
         return {"status": "already_running"}
+
+    if not try_claim_generation(f"batch:{project_id}"):
+        return {"status": "busy"}
 
     task = asyncio.create_task(run_batch_generation(project_id))
     _running_generations[project_id] = task
@@ -912,6 +983,7 @@ async def generate_project(project_id: str) -> dict:
         _background_tasks.discard(completed_task)
         if _running_generations.get(project_id) is completed_task:
             _running_generations.pop(project_id, None)
+        release_generation()
 
     task.add_done_callback(_cleanup)
 

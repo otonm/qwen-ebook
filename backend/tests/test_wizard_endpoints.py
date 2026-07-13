@@ -263,41 +263,58 @@ def test_trigger_preview_missing_character_404s():
     assert response.status_code == 404
 
 
-def test_rapid_preview_trigger_race_last_wins(monkeypatch):
-    """Pitfall 5: a slow first generation must not clobber a faster,
-    newer second generation's preview once both settle. Now that PATCH no
-    longer auto-generates, the race is driven by two rapid explicit
-    POST /characters/{id}/preview calls against two different presets."""
+def test_second_preview_trigger_rejected_while_first_in_flight(monkeypatch):
+    """The global single-flight generation lock (generation_worker,
+    test_generation_lock.py) means a second trigger can no longer race a
+    first — it's rejected with 409 outright while one is in flight."""
 
-    def _controlled_synthesize(text: str, speaker: str) -> bytes:
-        if speaker == "slow":
-            time.sleep(0.3)
-            return b"SLOW-PREVIEW-BYTES"
-        time.sleep(0.02)
-        return b"FAST-PREVIEW-BYTES"
+    def _slow_synthesize(text: str, speaker: str) -> bytes:
+        time.sleep(0.3)
+        return b"PREVIEW-BYTES"
 
-    monkeypatch.setattr("app.main.synthesize", _controlled_synthesize)
+    monkeypatch.setattr("app.main.synthesize", _slow_synthesize)
 
     project = _seed_project()
     character_id = project["characters"][0]["id"]
 
-    assign_slow = client.patch(f"/characters/{character_id}", json={"voice_preset": "slow"})
-    assert assign_slow.status_code == 200
     first = client.post(f"/characters/{character_id}/preview")
     assert first.status_code == 200
 
-    assign_fast = client.patch(f"/characters/{character_id}", json={"voice_preset": "fast"})
-    assert assign_fast.status_code == 200
     second = client.post(f"/characters/{character_id}/preview")
-    assert second.status_code == 200
+    assert second.status_code == 409
 
-    # Give both background generations (slow ~0.3s, fast ~0.02s) time to
-    # fully settle before asserting the final state.
-    time.sleep(0.5)
-
+    _wait_for_preview(character_id)
     preview_response = client.get(f"/characters/{character_id}/preview.wav")
     assert preview_response.status_code == 200
-    assert preview_response.content == b"FAST-PREVIEW-BYTES"
+    assert preview_response.content == b"PREVIEW-BYTES"
+
+
+def test_edit_during_generation_discards_stale_preview(monkeypatch):
+    """Pitfall 5: a voice-field PATCH landing while a preview generation is
+    still in flight (bumping voice_version, clearing preview_audio_path)
+    must not have its invalidation overwritten once that now-stale
+    generation finishes."""
+
+    def _slow_synthesize(text: str, speaker: str) -> bytes:
+        time.sleep(0.3)
+        return b"STALE-PREVIEW-BYTES"
+
+    monkeypatch.setattr("app.main.synthesize", _slow_synthesize)
+
+    project = _seed_project()
+    character_id = project["characters"][0]["id"]
+
+    trigger = client.post(f"/characters/{character_id}/preview")
+    assert trigger.status_code == 200
+
+    # Lands while the slow synthesize() call above is still running.
+    patch = client.patch(f"/characters/{character_id}", json={"voice_preset": "different"})
+    assert patch.status_code == 200
+
+    time.sleep(0.5)  # let the now-stale generation finish
+
+    # Discarded, not written back over the edit's invalidation.
+    assert client.get(f"/characters/{character_id}/preview.wav").status_code == 409
 
 
 # --- POST /characters/undo-merge (WR-01) --------------------------------

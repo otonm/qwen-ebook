@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { getProject, type Project, type Segment } from "@/api/client"
 import { ConfigPanel } from "@/components/ConfigPanel"
 import { SegmentTable } from "@/components/SegmentTable"
+import { useGenerationLock } from "@/hooks/useGenerationLock"
 import { useGenerationStream } from "@/hooks/useGenerationStream"
 
 interface ProjectScreenProps {
@@ -17,6 +18,11 @@ interface ProjectScreenProps {
 export function ProjectScreen({ projectId }: ProjectScreenProps) {
   const [project, setProject] = useState<Project | null>(null)
   const generation = useGenerationStream(projectId)
+  // Global (app-wide, not just this project) single-flight signal — only
+  // one generation of any kind may be in flight at a time, so both the
+  // table's per-row buttons and the config panel's controls disable
+  // whenever ANY generation elsewhere holds it.
+  const generationLocked = useGenerationLock()
 
   const refetch = useCallback(() => {
     getProject(projectId).then(setProject).catch(() => setProject(null))
@@ -76,6 +82,7 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
             segments={liveSegments}
             characters={project.characters}
             onSegmentChange={handleSegmentChange}
+            generationLocked={generationLocked}
           />
         </div>
         <div className="xl:w-[30%]">
@@ -84,6 +91,7 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
             segments={liveSegments}
             generation={generation}
             onRefresh={refetch}
+            generationLocked={generationLocked}
           />
         </div>
       </div>

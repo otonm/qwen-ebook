@@ -48,6 +48,7 @@ interface SegmentTableProps {
   segments: Segment[]
   characters: Character[]
   onSegmentChange: (segment: Segment) => void
+  generationLocked: boolean
 }
 
 const columnHelper = createColumnHelper<Segment>()
@@ -87,9 +88,11 @@ function StatusBadge({ status }: { status: GenerationStatus }) {
 function GeneratePlayButton({
   segment,
   onSegmentChange,
+  generationLocked,
 }: {
   segment: Segment
   onSegmentChange: (segment: Segment) => void
+  generationLocked: boolean
 }) {
   const [isPlaying, setIsPlaying] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
@@ -100,6 +103,12 @@ function GeneratePlayButton({
   // must disable/spin this button too, not just its own local click flag —
   // otherwise a second click fires a duplicate POST /segments/{id}/generate.
   const isRowGenerating = isGenerating || segment.generation_status === "generating"
+  // Only one generation may be in flight app-wide (backend-enforced global
+  // lock) — disable the GENERATE half of this button while something else
+  // holds it. Playback of already-generated audio doesn't touch the GPU,
+  // so it stays enabled regardless (hasAudio already routes handleClick to
+  // the play branch in that case).
+  const isDisabled = isRowGenerating || (!hasAudio && generationLocked)
 
   useEffect(() => {
     if (autoplayRef.current && hasAudio && audioRef.current) {
@@ -141,7 +150,7 @@ function GeneratePlayButton({
         type="button"
         size="icon-sm"
         variant={isPlaying ? "default" : "outline"}
-        disabled={isRowGenerating}
+        disabled={isDisabled}
         onClick={() => void handleClick()}
         aria-label={label}
       >
@@ -308,7 +317,12 @@ function BulkReassignToolbar({
  * SegmentPreview.tsx's read-only TanStack setup with editable Narrator/
  * Text cells (commit onBlur), a per-row generate/play control, and
  * checkbox row selection + bulk-reassign toolbar. */
-export function SegmentTable({ segments, characters, onSegmentChange }: SegmentTableProps) {
+export function SegmentTable({
+  segments,
+  characters,
+  onSegmentChange,
+  generationLocked,
+}: SegmentTableProps) {
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
   const data = useMemo(
     () => [...segments].sort((a, b) => a.order - b.order),
@@ -367,12 +381,16 @@ export function SegmentTable({ segments, characters, onSegmentChange }: SegmentT
         header: "",
         cell: ({ row }) => (
           <div className="flex items-center gap-1">
-            <GeneratePlayButton segment={row.original} onSegmentChange={onSegmentChange} />
+            <GeneratePlayButton
+              segment={row.original}
+              onSegmentChange={onSegmentChange}
+              generationLocked={generationLocked}
+            />
           </div>
         ),
       }),
     ],
-    [characters, onSegmentChange]
+    [characters, onSegmentChange, generationLocked]
   )
 
   const table = useReactTable({

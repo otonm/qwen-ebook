@@ -38,9 +38,11 @@ function ConfigField({ label, value }: { label: string; value: string }) {
 function CharacterPreviewRow({
   character,
   onRefresh,
+  generationLocked,
 }: {
   character: Character
   onRefresh: () => void
+  generationLocked: boolean
 }) {
   const [isPlaying, setIsPlaying] = useState(false)
   const [isTriggeringPreview, setIsTriggeringPreview] = useState(false)
@@ -106,7 +108,7 @@ function CharacterPreviewRow({
           type="button"
           size="sm"
           variant="ghost"
-          disabled={isGeneratingPreview}
+          disabled={isGeneratingPreview || generationLocked}
           onClick={() => void handleGeneratePreview()}
         >
           {isGeneratingPreview ? (
@@ -134,13 +136,20 @@ interface ConfigPanelProps {
   segments: Segment[]
   generation: GenerationStreamState
   onRefresh: () => void
+  generationLocked: boolean
 }
 
 /** CFG-01/02/03: the right-side (~30% width) config panel — input file/
  * model/output format/output file, the character list with preview
  * controls, and the Generate All/Resume Generation CTA + live batch
  * progress (UI-SPEC Layout, Copywriting Contract). */
-export function ConfigPanel({ project, segments, generation, onRefresh }: ConfigPanelProps) {
+export function ConfigPanel({
+  project,
+  segments,
+  generation,
+  onRefresh,
+  generationLocked,
+}: ConfigPanelProps) {
   const [isStarting, setIsStarting] = useState(false)
   const [isCancelling, setIsCancelling] = useState(false)
 
@@ -155,7 +164,13 @@ export function ConfigPanel({ project, segments, generation, onRefresh }: Config
   // per-row-triggered "generating" segment can still be raced by Generate
   // All firing a second batch over the same rows.
   const anyGenerating = segments.some((segment) => segment.generation_status === "generating")
-  const isRunning = isBatchRunning || anyGenerating
+  const isSelfRunning = isBatchRunning || anyGenerating
+  // generationLocked extends the disabled (not the "Generating…" label)
+  // state to the app-wide backend lock, covering a character preview or a
+  // batch running in a different project too (segment status alone can't
+  // see those) — this button isn't itself running, so it shouldn't claim
+  // to be.
+  const isRunning = isSelfRunning || generationLocked
   const failedCount = segments.filter((segment) => segment.generation_status === "error").length
   // Open Question 1's resolution: the join blocks (surfaces an error)
   // rather than silently skipping failed segments — no "last good"
@@ -205,7 +220,12 @@ export function ConfigPanel({ project, segments, generation, onRefresh }: Config
         <h2 className="text-lg font-semibold">Characters</h2>
         <div className="flex flex-col gap-1">
           {project.characters.map((character) => (
-            <CharacterPreviewRow key={character.id} character={character} onRefresh={onRefresh} />
+            <CharacterPreviewRow
+              key={character.id}
+              character={character}
+              onRefresh={onRefresh}
+              generationLocked={generationLocked}
+            />
           ))}
         </div>
       </section>
@@ -218,10 +238,12 @@ export function ConfigPanel({ project, segments, generation, onRefresh }: Config
           onClick={() => void handleGenerateAll()}
           disabled={isRunning}
         >
-          {isRunning ? (
+          {isSelfRunning ? (
             <>
               <Loader2 className="animate-spin" /> Generating…
             </>
+          ) : generationLocked ? (
+            "Generation in progress…"
           ) : isResuming ? (
             "Resume Generation"
           ) : (

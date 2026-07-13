@@ -40,6 +40,7 @@ interface CharacterCardProps {
   voices: VoicePreset[]
   onCastRefresh: () => void
   onMerged: (undo: MergeUndoSnapshot) => void
+  generationLocked: boolean
 }
 
 export function CharacterCard({
@@ -48,6 +49,7 @@ export function CharacterCard({
   voices,
   onCastRefresh,
   onMerged,
+  generationLocked,
 }: CharacterCardProps) {
   const [name, setName] = useState(character.name)
   const [voiceInstructions, setVoiceInstructions] = useState(
@@ -220,7 +222,7 @@ export function CharacterCard({
             type="button"
             size="sm"
             variant="outline"
-            disabled={isGenerating}
+            disabled={isGenerating || generationLocked}
             onClick={() => void handleGenerate()}
             aria-label={`Generate voice preview for ${character.name}`}
           >

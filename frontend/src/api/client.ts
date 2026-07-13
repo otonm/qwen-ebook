@@ -60,6 +60,10 @@ export interface VoicePreset {
   label: string
 }
 
+export interface GenerationLockStatus {
+  active: boolean
+}
+
 export interface CharacterPatch {
   name?: string
   description?: string
@@ -163,6 +167,15 @@ export async function undoMergeCharacter(
 
 export async function getVoices(): Promise<VoicePreset[]> {
   const response = await fetch("/voices")
+  return parseJsonOrThrow(response)
+}
+
+/** Global single-flight generation lock — true while ANY generation
+ * (a character preview, a per-row segment, or a batch run, in any
+ * project) is in flight. Polled to disable every OTHER
+ * generation-triggering control while one is active. */
+export async function getGenerationLockStatus(): Promise<GenerationLockStatus> {
+  const response = await fetch("/generation-status")
   return parseJsonOrThrow(response)
 }
 

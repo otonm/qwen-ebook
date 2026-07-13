@@ -44,6 +44,39 @@ _generation_progress_queues: dict[str, asyncio.Queue] = {}
 # _generation_progress_queues.
 _running_generations: dict[str, asyncio.Task] = {}
 
+# Single-flight guard: at most one generation — a character preview, a
+# per-row segment, or a whole batch run, in any project — may be in flight
+# across the ENTIRE app at once. tts_service/server.py's /synthesize has no
+# concurrency control of its own (a bare run_in_threadpool with no lock or
+# queue), so two uncoordinated calls would race the same model instance on
+# a single 16GB-VRAM GPU. Global rather than per-project because the
+# constraint is the one shared GPU, not any one project. A plain module
+# global (not an asyncio.Lock) is safe here: there is no `await` between
+# the check and the set in try_claim_generation, and asyncio is
+# single-threaded, so no other coroutine can interleave between them.
+_active_generation_label: str | None = None
+
+
+def is_any_generation_active() -> bool:
+    return _active_generation_label is not None
+
+
+def try_claim_generation(label: str) -> bool:
+    """Atomically claim the single global generation slot. Returns False
+    without blocking or queueing if another generation already holds it —
+    callers surface that as a 409 (explicit user action) or silently skip
+    (best-effort background regen, e.g. after undo-merge)."""
+    global _active_generation_label
+    if _active_generation_label is not None:
+        return False
+    _active_generation_label = label
+    return True
+
+
+def release_generation() -> None:
+    global _active_generation_label
+    _active_generation_label = None
+
 
 def _get_generation_queue(project_id: str) -> asyncio.Queue:
     return _generation_progress_queues.setdefault(project_id, asyncio.Queue())
