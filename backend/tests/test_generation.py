@@ -106,6 +106,24 @@ def test_generate_segment_produces_audio():
     assert len(audio_response.content) > 0
 
 
+def test_generate_segment_passes_voice_instructions_as_instruct(monkeypatch):
+    """The segment's Voice Instructions text must actually reach the TTS
+    call as `instruct` free-text steering — not just affect which preset
+    best_guess_preset falls back to (previously the only effect it had)."""
+    captured: dict = {}
+
+    def _capturing_synthesize(text: str, speaker: str, instruct: str | None = None) -> bytes:
+        captured["instruct"] = instruct
+        return b"AUDIO-BYTES"
+
+    monkeypatch.setattr("app.main.synthesize", _capturing_synthesize)
+
+    seed = _seed_segment(voice_instructions="sad and aggressive")
+    response = client.post(f"/segments/{seed['segment_id']}/generate")
+    assert response.status_code == 200
+    assert captured["instruct"] == "sad and aggressive"
+
+
 # --- PATCH /segments/{id} — cache hit/bust (GEN-02/GEN-03) ---------------
 
 
@@ -164,7 +182,7 @@ def test_patch_bumps_generation_version(monkeypatch):
 
     call_count = {"n": 0}
 
-    def _counting_synthesize(text: str, speaker: str) -> bytes:
+    def _counting_synthesize(text: str, speaker: str, instruct: str | None = None) -> bytes:
         call_count["n"] += 1
         return b"SHOULD-NOT-BE-CALLED"
 
@@ -192,7 +210,7 @@ def test_patch_bumps_generation_version(monkeypatch):
 def test_patch_invalidates_without_regenerating(monkeypatch):
     call_count = {"n": 0}
 
-    def _counting_synthesize(text: str, speaker: str) -> bytes:
+    def _counting_synthesize(text: str, speaker: str, instruct: str | None = None) -> bytes:
         call_count["n"] += 1
         return b"AUDIO-BYTES"
 
@@ -456,7 +474,7 @@ def test_batch_resets_stale_generating():
 def test_batch_continues_past_error(monkeypatch):
     from app.tts_client import synthesize as real_synthesize
 
-    def _flaky_synthesize(text: str, speaker: str) -> bytes:
+    def _flaky_synthesize(text: str, speaker: str, instruct: str | None = None) -> bytes:
         if "boom" in text:
             raise RuntimeError("synthetic synthesis failure")
         return real_synthesize(text, speaker)
@@ -551,7 +569,7 @@ def test_batch_regenerates_after_reassign_to_different_voice():
 def test_second_generate_all_while_running_is_rejected(monkeypatch):
     call_count = {"n": 0}
 
-    def _slow_synthesize(text: str, speaker: str) -> bytes:
+    def _slow_synthesize(text: str, speaker: str, instruct: str | None = None) -> bytes:
         call_count["n"] += 1
         time.sleep(0.2)
         return b"SLOW-BATCH-BYTES"
@@ -594,7 +612,7 @@ def test_per_row_generate_rejects_duplicate_while_generating():
 
 
 def test_cancel_running_batch_resets_generating_rows(monkeypatch):
-    def _slow_synthesize(text: str, speaker: str) -> bytes:
+    def _slow_synthesize(text: str, speaker: str, instruct: str | None = None) -> bytes:
         time.sleep(0.3)
         return b"SLOW-BATCH-BYTES"
 

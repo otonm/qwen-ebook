@@ -1,7 +1,8 @@
 """Internal FastAPI server for the GPU-scoped Qwen3-TTS inference container.
 
-Implements the internal contract locked in 01-SKELETON.md:
-  POST /synthesize  {"text": str, "speaker": str | null} -> 200 audio/wav
+Implements the internal contract locked in 01-SKELETON.md (extended with
+`instruct` — see model.py's synthesize_wav):
+  POST /synthesize  {"text": str, "speaker": str | null, "instruct": str | null} -> 200 audio/wav
   GET  /healthz      -> 200 only once the model is loaded and resident
 
 Also runs a periodic GPU keepalive matmul (ROCm-specific gotcha — AMD's
@@ -81,6 +82,7 @@ app = FastAPI(lifespan=lifespan)
 class SynthesizeRequest(BaseModel):
     text: str
     speaker: str | None = None
+    instruct: str | None = None
 
 
 @app.get("/healthz")
@@ -104,7 +106,7 @@ async def synthesize(req: SynthesizeRequest) -> Response:
         # would block /healthz and every other request for the duration —
         # offload it to the threadpool instead.
         wav_bytes = await run_in_threadpool(
-            _model_module.synthesize_wav, req.text, req.speaker
+            _model_module.synthesize_wav, req.text, req.speaker, req.instruct
         )
     except ValueError as exc:
         # Unsupported speaker / empty text / oversized text -> 400, not 500

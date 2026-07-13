@@ -40,15 +40,19 @@ def _mock_wav_bytes() -> bytes:
     return buf.getvalue()
 
 
-def synthesize(text: str, speaker: str) -> bytes:
-    """Return WAV bytes for `text` spoken by `speaker`."""
+def synthesize(text: str, speaker: str, instruct: str | None = None) -> bytes:
+    """Return WAV bytes for `text` spoken by `speaker`, optionally steered
+    by free-text `instruct` (tone/delivery — e.g. "sad and aggressive").
+    The CustomVoice model supports a chosen speaker AND instruct steering
+    together, not either/or (qwen-tts's generate_custom_voice(text,
+    speaker, instruct=...) — see tts_service/model.py)."""
     if settings.TTS_BACKEND == "mock":
         return _mock_wav_bytes()
 
     if settings.TTS_BACKEND == "http":
         response = httpx.post(
             f"{settings.TTS_SERVICE_URL}/synthesize",
-            json={"text": text, "speaker": speaker},
+            json={"text": text, "speaker": speaker, "instruct": instruct},
             timeout=httpx.Timeout(connect=5.0, read=300.0, write=30.0, pool=5.0),
         )
         response.raise_for_status()

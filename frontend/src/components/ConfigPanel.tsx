@@ -53,14 +53,18 @@ function CharacterPreviewRow({
   // button below, so isTriggeringPreview never needs an explicit reset.
   const isGeneratingPreview = isTriggeringPreview && !hasPreview
 
-  // Preview generation is a background task (no SSE for it) — poll a few
-  // times after triggering so Play enables once it lands, without the user
-  // needing to manually refresh. Bounded so a failed generation doesn't
-  // poll forever.
+  // Preview generation is a background task (no SSE for it) — poll
+  // steadily after triggering so Play enables once it lands, without the
+  // user needing to manually refresh. 60s ceiling (not a short burst):
+  // real GPU synthesis can run well past a few seconds on a cold/idle-GPU
+  // downclock-recovery spike (tts_service/model.py's keepalive_matmul; a
+  // fresh TTS container's very first request measured ~38s in
+  // production), so a failed generation is the only thing this ceiling
+  // needs to guard against, not a normal slow one.
   useEffect(() => {
     if (!isGeneratingPreview) return undefined
     const interval = setInterval(onRefresh, 1500)
-    const timeout = setTimeout(() => clearInterval(interval), 15000)
+    const timeout = setTimeout(() => clearInterval(interval), 60000)
     return () => {
       clearInterval(interval)
       clearTimeout(timeout)

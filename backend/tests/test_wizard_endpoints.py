@@ -258,6 +258,33 @@ def test_trigger_preview_generates_on_demand():
     assert len(preview_response.content) > 0
 
 
+def test_trigger_preview_passes_voice_instructions_as_instruct(monkeypatch):
+    """The character's Voice Instructions text must actually reach the TTS
+    call as `instruct` free-text steering — not just affect which preset
+    best_guess_preset falls back to (previously the only effect it had)."""
+    captured: dict = {}
+
+    def _capturing_synthesize(text: str, speaker: str, instruct: str | None = None) -> bytes:
+        captured["instruct"] = instruct
+        return b"AUDIO-BYTES"
+
+    monkeypatch.setattr("app.main.synthesize", _capturing_synthesize)
+
+    project = _seed_project()
+    character_id = project["characters"][0]["id"]
+
+    patch = client.patch(
+        f"/characters/{character_id}", json={"voice_instructions": "sad and aggressive"}
+    )
+    assert patch.status_code == 200
+
+    trigger = client.post(f"/characters/{character_id}/preview")
+    assert trigger.status_code == 200
+    _wait_for_preview(character_id)
+
+    assert captured["instruct"] == "sad and aggressive"
+
+
 def test_trigger_preview_missing_character_404s():
     response = client.post("/characters/does-not-exist/preview")
     assert response.status_code == 404
@@ -268,7 +295,7 @@ def test_second_preview_trigger_rejected_while_first_in_flight(monkeypatch):
     test_generation_lock.py) means a second trigger can no longer race a
     first — it's rejected with 409 outright while one is in flight."""
 
-    def _slow_synthesize(text: str, speaker: str) -> bytes:
+    def _slow_synthesize(text: str, speaker: str, instruct: str | None = None) -> bytes:
         time.sleep(0.3)
         return b"PREVIEW-BYTES"
 
@@ -295,7 +322,7 @@ def test_edit_during_generation_discards_stale_preview(monkeypatch):
     must not have its invalidation overwritten once that now-stale
     generation finishes."""
 
-    def _slow_synthesize(text: str, speaker: str) -> bytes:
+    def _slow_synthesize(text: str, speaker: str, instruct: str | None = None) -> bytes:
         time.sleep(0.3)
         return b"STALE-PREVIEW-BYTES"
 

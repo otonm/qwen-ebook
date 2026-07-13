@@ -432,14 +432,7 @@ async def _generate_preview(character_id: str, version: int) -> None:
             return
         name = character.name
         description = (character.description or "").strip()
-        # T-02-10/D-17: the actual /synthesize wire contract (Phase 1) only
-        # takes a preset speaker name, no free-text instruct parameter.
-        # # ponytail: when no preset is explicitly chosen, best_guess_preset
-        # resolves the free-text voice_instructions to a preset name instead
-        # — the "free-text steering" this phase ships is pre-fill + best-
-        # guess preset selection, not real per-request instruct-steering
-        # (which Phase 1's TTS surface doesn't support; D-17 explicitly
-        # defers that to VoiceDesign).
+        instruct = character.voice_instructions or None
         speaker = character.voice_preset
         if not speaker:
             # "" (the sole shipped preset's persisted value, WIZ-03) means
@@ -451,7 +444,7 @@ async def _generate_preview(character_id: str, version: int) -> None:
     intro_line = f"Hi, my name is {name} and I am a {description}."
 
     try:
-        wav_bytes = await run_in_threadpool(synthesize, intro_line, speaker)
+        wav_bytes = await run_in_threadpool(synthesize, intro_line, speaker, instruct)
     except Exception:
         # Broad catch is deliberate: this runs as a fire-and-forget background
         # task (asyncio.create_task) with no caller to propagate to — a failed
@@ -757,10 +750,12 @@ async def patch_segment(segment_id: str, patch: SegmentPatch) -> dict:
 
 def _resolve_segment_speaker(segment: Segment, character: Character | None) -> str:
     """Same preset-then-best-guess-fallback resolution _generate_preview
-    uses for characters (T-02-10/D-17: only a preset name, no per-request
-    free-text instruct steering), applied at segment granularity so the
-    segment's own Voice Instructions cell — not just the character's — can
-    steer the fallback guess."""
+    uses for characters, applied at segment granularity so the segment's
+    own Voice Instructions cell — not just the character's — can steer the
+    fallback guess. This only resolves the SPEAKER (preset); the segment's
+    voice_instructions text is passed separately as `instruct` free-text
+    steering in regenerate_segment, on top of whichever speaker this
+    returns."""
     speaker = character.voice_preset if character else None
     if not speaker:
         fallback_text = segment.voice_instructions or (
@@ -782,6 +777,7 @@ async def regenerate_segment(segment_id: str, version: int) -> None:
             return
         character = session.get(Character, segment.character_id)
         speaker = _resolve_segment_speaker(segment, character)
+        instruct = segment.voice_instructions or None
         cache_key = compute_cache_key(speaker, segment.voice_instructions, segment.text)
         text = segment.text
         existing_cache_key = segment.cache_key
@@ -804,7 +800,7 @@ async def regenerate_segment(segment_id: str, version: int) -> None:
         return
 
     try:
-        wav_bytes = await run_in_threadpool(synthesize, text, speaker)
+        wav_bytes = await run_in_threadpool(synthesize, text, speaker, instruct)
     except Exception:
         # Broad catch is deliberate: this runs as a fire-and-forget
         # background task with no caller to propagate to.

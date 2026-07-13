@@ -60,14 +60,32 @@ export function CharacterCard({
   const [mergeTargetId, setMergeTargetId] = useState<string | null>(null)
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false)
   const audioRef = useRef<HTMLAudioElement>(null)
-  const generateTimeoutRef = useRef<number | null>(null)
   const hasPreview = Boolean(character.preview_audio_path)
+  const isWaitingForPreview = isGenerating && !hasPreview
 
+  // The preview trigger is fire-and-forget — the server generates in the
+  // background, and real GPU synthesis can run well past a few seconds
+  // (a cold/idle GPU downclock-recovery latency spike is a documented
+  // issue in this codebase, tts_service/model.py's keepalive_matmul; a
+  // fresh TTS container's very first request measured ~38s in production).
+  // A short fixed burst of refetches isn't reliable, so poll steadily for
+  // as long as we're actually waiting: this effect re-runs whenever
+  // isWaitingForPreview changes, and React's own cleanup clears the
+  // interval/ceiling the instant hasPreview flips true — no extra state
+  // needed to "turn off" polling.
+  // ponytail: 60s ceiling only guards a silent server-side failure
+  // (_generate_preview logs and returns without ever setting
+  // preview_audio_path) — bump further if cold-start latency ever grows
+  // past this in practice.
   useEffect(() => {
+    if (!isWaitingForPreview) return undefined
+    const interval = window.setInterval(onCastRefresh, 1500)
+    const ceiling = window.setTimeout(() => setIsGenerating(false), 60000)
     return () => {
-      if (generateTimeoutRef.current !== null) window.clearTimeout(generateTimeoutRef.current)
+      window.clearInterval(interval)
+      window.clearTimeout(ceiling)
     }
-  }, [])
+  }, [isWaitingForPreview, onCastRefresh])
 
   // Keep local edit buffers aligned when the underlying character record
   // changes for a reason other than this card's own edits (merge, initial
@@ -111,25 +129,11 @@ export function CharacterCard({
     }
   }
 
-  // The preview trigger is fire-and-forget (server generates in the
-  // background); onCastRefresh's staggered refetch chain (last refetch at
-  // 3.5s) lands the new preview_audio_path, which switches this card from
-  // the Generate button to Play — isGenerating itself doesn't need to be
-  // reset for that to happen, since the Generate branch simply isn't
-  // rendered once hasPreview is true. The 6s timeout below only matters for
-  // a silent server-side failure (_generate_preview logs and returns
-  // without ever setting preview_audio_path): it reverts the button so the
-  // user can retry instead of it spinning forever.
-  // ponytail: re-editing the voice within that 6s window after a
-  // successful generate can leave the Generate button briefly disabled —
-  // acceptable ceiling, not worth an extra ref just to close a few-second
-  // gap nobody is likely to hit.
   async function handleGenerate() {
     setIsGenerating(true)
     try {
       await triggerCharacterPreview(character.id)
       onCastRefresh()
-      generateTimeoutRef.current = window.setTimeout(() => setIsGenerating(false), 6000)
     } catch {
       setIsGenerating(false)
     }

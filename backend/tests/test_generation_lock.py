@@ -85,7 +85,7 @@ def test_segment_generate_blocks_character_preview_across_projects(monkeypatch):
     generate in project A blocks a character preview trigger in an
     unrelated project B while it's in flight."""
 
-    def _slow_synthesize(text: str, speaker: str) -> bytes:
+    def _slow_synthesize(text: str, speaker: str, instruct: str | None = None) -> bytes:
         time.sleep(0.3)
         return b"SEGMENT-BYTES"
 
@@ -117,7 +117,7 @@ def test_character_preview_blocks_segment_generate_while_in_flight(monkeypatch):
     """The reverse direction: a slow character preview blocks a per-row
     segment generate attempt in the SAME project while it's in flight."""
 
-    def _slow_synthesize(text: str, speaker: str) -> bytes:
+    def _slow_synthesize(text: str, speaker: str, instruct: str | None = None) -> bytes:
         time.sleep(0.3)
         return b"PREVIEW-BYTES"
 
@@ -147,7 +147,7 @@ def test_batch_generation_blocks_per_row_generate_in_different_project(monkeypat
     per-segment) — a per-row generate in an unrelated project is rejected
     for as long as the batch is running."""
 
-    def _slow_synthesize(text: str, speaker: str) -> bytes:
+    def _slow_synthesize(text: str, speaker: str, instruct: str | None = None) -> bytes:
         time.sleep(0.15)
         return b"BATCH-BYTES"
 
@@ -207,7 +207,7 @@ def test_lock_releases_after_batch_cancel(monkeypatch):
     task's done-callback) — otherwise every other generation control would
     stay disabled forever after a Stop."""
 
-    def _slow_synthesize(text: str, speaker: str) -> bytes:
+    def _slow_synthesize(text: str, speaker: str, instruct: str | None = None) -> bytes:
         time.sleep(1.0)
         return b"SLOW-BYTES"
 

@@ -16,9 +16,11 @@ logger = logging.getLogger("tts_service.model")
 
 MODEL_NAME = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
 
-# D-04: single default CustomVoice speaker preset for every chunk, no
-# per-chunk instruct-steering. Chosen once at startup below after the
-# model loads and its supported speaker list is known.
+# D-04: single default CustomVoice speaker preset, used as the fallback
+# whenever a request doesn't specify one. Chosen once at startup below
+# after the model loads and its supported speaker list is known.
+# Independent of instruct: every request can still supply its own
+# free-text instruct steering regardless of which speaker is in play.
 DEFAULT_SPEAKER: str | None = None
 
 logger.info("Loading %s (this can take 1-2 minutes on first run)...", MODEL_NAME)
@@ -53,8 +55,9 @@ def get_supported_speakers() -> list[str]:
     return _supported_speakers
 
 
-def synthesize_wav(text: str, speaker: str | None = None) -> bytes:
-    """Synthesize `text` with the given (or default) speaker, return WAV bytes.
+def synthesize_wav(text: str, speaker: str | None = None, instruct: str | None = None) -> bytes:
+    """Synthesize `text` with the given (or default) speaker, optionally
+    steered by free-text `instruct` (tone/delivery), return WAV bytes.
 
     Raises ValueError on empty text, text exceeding MAX_TEXT_LENGTH, or an
     unsupported speaker. Speaker validation is NOT hand-rolled here — it is
@@ -69,11 +72,17 @@ def synthesize_wav(text: str, speaker: str | None = None) -> bytes:
 
     chosen_speaker = speaker or DEFAULT_SPEAKER
 
-    # generate_custom_voice(text: str, speaker: str, ...) -> (List[np.ndarray], sample_rate: int)
-    # verified directly from the qwen-tts==0.1.1 wheel (qwen3_tts_model.py).
+    # generate_custom_voice(text, speaker, instruct=None, ...) ->
+    # (List[np.ndarray], sample_rate: int) — verified directly from the
+    # qwen-tts==0.1.1 wheel (qwen3_tts_model.py): CustomVoice takes a
+    # predefined speaker id "optionally controlled by instruction text",
+    # so a blank/whitespace-only instruct is passed through as None rather
+    # than an empty string (treated identically by the model, but None is
+    # the more honest "no instruction" signal).
     wavs, sample_rate = model.generate_custom_voice(
         text=text,
         speaker=chosen_speaker,
+        instruct=instruct.strip() if instruct and instruct.strip() else None,
     )
     audio_array = wavs[0]
 
