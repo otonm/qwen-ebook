@@ -43,29 +43,27 @@ Explicitly excluded from v1.1. Documented to prevent scope creep.
 
 ## Traceability
 
-Populated during roadmap creation.
-
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| GEN-06 | TBD | Pending |
-| GEN-07 | TBD | Pending |
-| GEN-08 | TBD | Pending |
-| GEN-09 | TBD | Pending |
-| GEN-10 | TBD | Pending |
-| GEN-11 | TBD | Pending |
-| GEN-12 | TBD | Pending |
-| CFG-04 | TBD | Pending |
-| CFG-05 | TBD | Pending |
-| CFG-06 | TBD | Pending |
-| CFG-07 | TBD | Pending |
-| CFG-08 | TBD | Pending |
-| TBL-05 | TBD | Pending |
+| GEN-06 | Phase 4 | Pending |
+| GEN-07 | Phase 4 | Pending |
+| GEN-08 | Phase 4 | Pending |
+| GEN-09 | Phase 7 | Pending |
+| GEN-10 | Phase 7 | Pending |
+| GEN-11 | Phase 7 | Pending |
+| GEN-12 | Phase 7 | Pending |
+| CFG-04 | Phase 5 | Pending |
+| CFG-05 | Phase 5 | Pending |
+| CFG-06 | Phase 6 | Pending |
+| CFG-07 | Phase 6 | Pending |
+| CFG-08 | Phase 6 | Pending |
+| TBL-05 | Phase 7 | Pending |
 
 **Coverage:**
 - v1.1 requirements: 13 total
-- Mapped to phases: 0 (pending roadmap)
-- Unmapped: 13 ⚠️ (resolved by roadmapper)
+- Mapped to phases: 13/13 ✓
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-07-13*
-*Last updated: 2026-07-13 after initial v1.1 definition*
+*Last updated: 2026-07-13 after v1.1 roadmap creation (Phases 4-7)*

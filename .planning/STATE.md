@@ -6,7 +6,7 @@ status: planning
 last_updated: "2026-07-13T10:02:06.267Z"
 last_activity: 2026-07-13
 progress:
-  total_phases: 0
+  total_phases: 4
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -17,17 +17,19 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-07-11)
+See: .planning/PROJECT.md (updated 2026-07-13)
 
 **Core value:** Given a long text, produce a natural-sounding, multi-character narrated audio file with minimal manual editing — the LLM does the heavy lifting of casting and segmenting, the user just fine-tunes.
-**Current focus:** Phase 03 — editable-table-full-generation-pipeline-persistence-deployme
+**Current focus:** Phase 4 — Immediate Cancellation
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-07-13 — Milestone v1.1 started
+Phase: 4 of 7 (Immediate Cancellation)
+Plan: — (not yet planned)
+Status: Ready to plan
+Last activity: 2026-07-13 — v1.1 ROADMAP.md created (Phases 4-7), 13/13 requirements mapped
+
+Progress: [░░░░░░░░░░] 0%
 
 ## Performance Metrics
 
@@ -50,10 +52,6 @@ Last activity: 2026-07-13 — Milestone v1.1 started
 - Trend: -
 
 *Updated after each plan completion*
-| Phase 03 P02 | 15 | 2 tasks | 4 files |
-| Phase 03 P03 | ~4min+checkpoint | 4 tasks | 7 files |
-| Phase 03 P04 | 10min | 2 tasks | 5 files |
-| Phase 03 P05 | ~15min | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -62,16 +60,10 @@ Last activity: 2026-07-13 — Milestone v1.1 started
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
-- Roadmap: Vertical-slice (MVP) phase structure chosen over research's horizontal-leaning suggestion — Phase 1 front-loads the ROCm/Podman/Qwen-TTS GPU risk while still shipping a real upload-to-audio user flow, rather than a GPU-only infrastructure phase.
-- Roadmap: Coarse granularity (config.json) produced 3 phases; DEPL-02 (Tailscale-only exposure) was folded into Phase 3 rather than given its own phase, to avoid a single-requirement phase.
-- [Phase ?]: Bulk reassign only bumps generation_version to mark rows stale — it does not auto-trigger regeneration (batch regen is plan 03-03's scope)
-- [Phase ?]: Radix Checkbox onCheckedChange passes a boolean, not a DOM event — wired via table.toggleAllRowsSelected(!!value)/row.toggleSelected(!!value) instead of the research pattern's getToggleXSelectedHandler()
-- [Phase ?]: Batch loop reuses main.py's regenerate_segment (lazy in-function import) instead of duplicating cache-check/version-guard logic - one implementation for both per-row and batch call sites
-- [Phase ?]: Task 4's real-GPU checkpoint (crash-resume + concurrent-edit-race) was run by the orchestrator directly on the production tts VM, automated via seeded throwaway projects + podman restart + TTS-container log inspection
-- [Phase ?]: Project.created_at already existed from plan 03-01 — no schema change needed for plan 03-04's list endpoint
-- [Phase ?]: Landing-with-no-project routing uses a separate in-memory LandingView state (list/upload) rather than overloading localStorage-backed projectId, so a mid-upload refresh lands back on the project list
-- [Phase ?]: Task 3's production deployment was performed by the orchestrator directly on the tts VM over Tailscale SSH (sudo/systemd/tailscale access this executor agent lacks) — matches how 03-01's Task 4 real-GPU checkpoint was handled
-- [Phase ?]: Open Question 2 from 03-RESEARCH.md is RESOLVED: tailscale serve on the host correctly reaches a Podman Quadlet pod port published to 127.0.0.1 only
+- Roadmap (v1.1): Kept research's proposed 4-phase structure (Phases 4-7) rather than compressing further under "coarse" granularity — each phase has 2-5 requirements, a distinct observable user outcome, and a real technical boundary (cancellation risk / model-swap hardware risk / decoupled output mechanics / UI consolidation layer), so 4 phases (the upper bound of coarse's 2-4 range) was judged not over-fragmented.
+- Roadmap (v1.1): Phase 4 (Immediate Cancellation) sequenced first — hardest unknown (StoppingCriteria on real ROCm hardware) and a structural prerequisite (addressable per-segment/per-character task handles) that Phases 5 and 7 build on.
+- Roadmap (v1.1): Phase 6 (Config Panel output/filename/download) marked as technically independent of Phases 4-5 (no shared code with the TTS HTTP boundary) but sequenced after them per research's default milestone build order, not a hard dependency.
+- Roadmap (v1.1): Phase 7 (unified button) deliberately last — depends on Phase 4's sync-to-async backend contract change plus the model/format/download controls Phases 5-6 add, so it's built against a stable backend rather than a moving API shape.
 
 ### Pending Todos
 
@@ -79,11 +71,12 @@ None yet.
 
 ### Blockers/Concerns
 
-- ~~Phase 1 (from research): ROCm 7.2/RDNA4 (gfx1201) support is very recent...~~ **RESOLVED 2026-07-10** (commit `1ce34aa`): the production RX 9070 XT VM (Debian 13, Tailscale hostname `tts`, real Navi 48/gfx1201 GPU) exists and the full D-09 re-verification checklist closed out against it — see `deploy/README.md` §"Production VM bring-up": `rocminfo`/on-device PyTorch matmul confirmed gfx1201 with no `HSA_OVERRIDE_GFX_VERSION`/`GPU_SECURITY_OPT` workarounds needed; rootless Podman GPU passthrough does NOT work on this Podman/crun combo (host GID mapping gap, not GPU-specific) — rootful (`sudo podman run --user 0:0`) does and is now `run-local.sh`'s default; a real end-to-end `POST /projects` returned a genuine non-silent WAV (24kHz, 21.4s, 96.5% non-zero samples). A `sox` packaging bug (missing transitive dependency of `qwen-tts`'s tokenizer) was found and fixed along the way. No pod is currently running on the VM (nothing persists a teardown) — `bash deploy/run-local.sh` re-brings it up on demand.
-- ~~Phase 1 (from research): Podman GPU passthrough...~~ **RESOLVED**, see above — this is the same finding.
-- Phase 2 (from research): Cross-chunk character reconciliation strategy is a synthesized best-practice (MEDIUM confidence), not a sourced novel-specific benchmark — validate chunk-size/context-window assumptions against Grok's actual limits and real book lengths before over-building chunking machinery. Partially addressed: 02-UAT.md's real-key Grok smoke test (2026-07-11) validated single-chunk prompt quality on a short passage; cross-chunk reconciliation itself is proven by a behavioral test (`test_run_analysis_multi_chunk_reconciles_duplicate_and_orders_segments_globally`) but not yet exercised against a real long book via a real LLM call — still open if that matters before Phase 3 sign-off.
-- ~~Phase 3 (new): The real GPU pipeline works but was proven on a fresh single pass...~~ **PARTIALLY RESOLVED 2026-07-12** (03-01-SUMMARY.md Task 4): per-segment generate, content-hash cache-hit, and edit-triggered cache-bust are now verified against the real gfx1201 pod (non-silent WAV, 33ms cache-hit with zero extra `/synthesize` calls, cache-bust produces a different hash/key). Still open: resumable batch generation and concurrent/regenerate-while-batch-running behavior under real GPU inference — validate in 03-02 (batch generation plan), not just at sign-off.
-- ~~Post-Phase-3 (found after sign-off): the backend never served the built frontend anywhere — every Task 4/Task 3 real-hardware check across 03-01/03-03/03-05 verified API endpoints directly (curl), so nobody noticed `https://tts.pigeon-bearded.ts.net/` 404'd for an actual browser until the user opened it.~~ **RESOLVED 2026-07-12** (commit `63b705b`): added a frontend build stage to `backend/Containerfile.backend` (multi-stage, `node:20-slim`) and mounted the built `dist/` via `StaticFiles(..., check_dir=False)` at `"/"` in `app/main.py`, registered after every API route so it only catches what no route claims. `deploy/run-local.sh`'s backend build now uses the repo root as context (not `backend/`) so the Containerfile can reach `frontend/`. Rebuilt and redeployed on the `tts` VM; verified root URL now serves `index.html` + JS/CSS bundles (200s) alongside working API routes, all through the real `tailscale serve` URL.
+- Phase 4 (from research): `StoppingCriteria` is verified reachable in the `qwen-tts` call chain by reading the installed wheel (HIGH confidence) but NOT yet verified to actually abort a live ROCm decode loop on real hardware (MEDIUM confidence) — treat as the first spike in Phase 4, not an assumed solved problem.
+- Phase 5 (from research): VRAM fragmentation across repeated ROCm model swaps has no measured baseline on the RX 9070 XT (16GB) — Phase 5 should include a real-hardware swap-cycle test (10+ swaps) with before/after `torch.cuda.mem_get_info()` logging as an exit criterion.
+- Phase 5 (from research): Speaker-list parity between the 1.7B and 0.6B CustomVoice checkpoints is unverified — check `get_supported_speakers()` once the 0.6B weights are downloaded.
+- Phase 6 (from research): `libopus` presence in the deploy VM's ffmpeg build is unconfirmed (no ffmpeg binary in the research sandbox) — run `ffmpeg -codecs | grep -E 'opus|flac'` on the deploy container before writing codec-dispatch code.
+- Cross-cutting (from research): whether "click kills it immediately" can be literally true (true GPU-call kill) or should be scoped to "UX-level immediacy" (fast disable/relabel/poll, with the true kill flagged as a harder backend problem) is a decision the team must make explicitly in Phase 4 and carry into Phase 7's button copy, not let default silently.
+- Carried from v1.0: CAST-02 (cross-chunk cast reconciliation) is proven by a behavioral unit test and a real-Grok single-chunk smoke test, but never exercised against a real long book spanning multiple chunks through a real LLM call — still open if long-book casting quality is ever in question.
 
 ### Quick Tasks Completed
 
@@ -106,11 +99,7 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-12T10:22:22.426Z
-Stopped at: Phase 3 complete (v1 milestone done) — DEPL-02 verified on production tts VM via tailscale serve
+Last session: 2026-07-13T10:02:06.267Z
+Stopped at: v1.1 ROADMAP.md created (Phases 4-7), REQUIREMENTS.md traceability updated, 13/13 requirements mapped
 Resume file: None
-Next step: v1 milestone complete — /gsd-complete-milestone
-
-## Operator Next Steps
-
-- Start the next milestone with /gsd-new-milestone
+Next step: /gsd-plan-phase 4
