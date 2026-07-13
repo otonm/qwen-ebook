@@ -37,6 +37,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 from starlette.concurrency import run_in_threadpool
 
+from app import tts_client
 from app.analysis_worker import has_pending_queue, progress_events, run_analysis
 from app.cache_key import compute_cache_key
 from app.config import settings
@@ -46,10 +47,12 @@ from app.generation_worker import (
     _running_generations,
     generation_progress_events,
     get_generation_task,
+    get_generation_task_by_label,
     has_pending_generation_queue,
     is_any_generation_active,
     is_generation_running,
     push_generation_event,
+    register_generation_task,
     release_generation,
     run_batch_generation,
     try_claim_generation,
@@ -69,18 +72,26 @@ _READ_CHUNK_SIZE = 1024 * 1024  # 1 MiB
 _background_tasks: set[asyncio.Task] = set()
 
 
-def _spawn_claimed_generation(coro) -> None:
+def _spawn_claimed_generation(coro, label: str) -> None:
     """Wrap an already-claimed (try_claim_generation succeeded) generation
-    coroutine as a tracked background task. Releases the global single-
+    coroutine as a tracked, addressable background task. Registers the task
+    under `label` (the exact try_claim_generation string, e.g.
+    "segment:{id}"/"preview:{id}") so a cancel endpoint can resolve it via
+    get_generation_task_by_label (Pitfall 3). Releases the global single-
     flight slot via the task's own done-callback regardless of how the
     coroutine exits (success, an early return, or an exception) — every
-    _generate_preview call site funnels through this so the release can
-    never be forgotten on one of its several early-return branches."""
+    call site funnels through this so the release can never be forgotten
+    on one of its several early-return branches, and so the lock is only
+    ever freed once the underlying call has actually finished (Pitfall 2:
+    a cancel handler must never call release_generation() directly)."""
     task = asyncio.create_task(coro)
     _background_tasks.add(task)
+    register_generation_task(label, task)
 
     def _cleanup(completed_task: asyncio.Task) -> None:
         _background_tasks.discard(completed_task)
+        if _running_generations.get(label) is completed_task:
+            _running_generations.pop(label, None)
         release_generation()
 
     task.add_done_callback(_cleanup)
@@ -514,9 +525,34 @@ async def trigger_character_preview(character_id: str) -> dict:
         session.commit()
         version = character.voice_version
 
-    _spawn_claimed_generation(_generate_preview(character_id, version))
+    _spawn_claimed_generation(
+        _generate_preview(character_id, version), f"preview:{character_id}"
+    )
 
     return {"status": "generating"}
+
+
+@app.post("/characters/{character_id}/preview/cancel")
+async def cancel_character_preview(character_id: str) -> dict:
+    """GEN-06/GEN-07: true-kill cancel for a single in-flight character
+    preview, same structure as cancel_segment_generation, keyed on
+    "preview:{id}". No-ops if nothing is running. There is no per-
+    character status column to reset — the stale/absent
+    preview_audio_path already reflects "no preview" — so cancelling here
+    just stops the underlying call and lets the lock release via the
+    task's own done-callback (never release_generation() directly,
+    Pitfall 2)."""
+    task = get_generation_task_by_label(f"preview:{character_id}")
+    if task is None:
+        return {"status": "not_running"}
+
+    await run_in_threadpool(tts_client.cancel)
+
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    return {"status": "cancelled"}
 
 
 @app.get("/characters/{character_id}/preview.wav")
@@ -678,7 +714,10 @@ async def undo_merge_character(body: UndoMergeRequest) -> dict:
     # until the user generates one manually via its now-visible Generate
     # button.
     if character.had_preview and try_claim_generation(f"preview:{character.id}"):
-        _spawn_claimed_generation(_generate_preview(character.id, character.voice_version))
+        _spawn_claimed_generation(
+            _generate_preview(character.id, character.voice_version),
+            f"preview:{character.id}",
+        )
 
     return result
 
@@ -855,11 +894,17 @@ async def regenerate_segment(segment_id: str, version: int) -> None:
         Path(old_path).unlink(missing_ok=True)
 
 
-@app.post("/segments/{segment_id}/generate")
+@app.post("/segments/{segment_id}/generate", status_code=202)
 async def generate_segment(segment_id: str) -> dict:
-    """TBL-04 on-demand per-row generate. Awaits the regenerate helper
-    synchronously (single-row scope, no need for a fire-and-forget task
-    here) and returns the segment's resulting status.
+    """TBL-04 on-demand per-row generate. GEN-06 prerequisite (Pitfall 3):
+    fire-and-return 202, mirroring trigger_character_preview's shape —
+    claims the lock, flips the row to "generating", spawns the actual
+    synth via _spawn_claimed_generation (registered under "segment:{id}"
+    so POST /segments/{id}/generate/cancel has a task to resolve, and
+    which only releases the lock via its own done-callback once the
+    underlying call has truly finished — Pitfall 2), and returns
+    immediately. The client polls GET /projects/{id} for the row's
+    resulting status instead of getting it back inline (04-04).
 
     T-03-26: a row already 'generating' (via an earlier per-row click or a
     batch run currently on this row) is rejected with 409 rather than
@@ -883,26 +928,56 @@ async def generate_segment(segment_id: str) -> dict:
             status_code=409, detail="Another generation is already in progress"
         )
 
-    try:
-        with Session(engine) as session:
-            segment = session.get(Segment, segment_id)
-            if segment is None:
-                raise HTTPException(status_code=404, detail="Segment not found")
-            segment.generation_status = "generating"
-            session.add(segment)
-            session.commit()
-            version = segment.generation_version
-
-        await regenerate_segment(segment_id, version)
-    finally:
-        release_generation()
-
     with Session(engine) as session:
         segment = session.get(Segment, segment_id)
         if segment is None:
+            release_generation()
             raise HTTPException(status_code=404, detail="Segment not found")
-        character = session.get(Character, segment.character_id)
-        return _serialize_segment(segment, character.name if character else None)
+        segment.generation_status = "generating"
+        session.add(segment)
+        session.commit()
+        version = segment.generation_version
+
+    _spawn_claimed_generation(
+        regenerate_segment(segment_id, version), f"segment:{segment_id}"
+    )
+
+    return {"status": "generating"}
+
+
+@app.post("/segments/{segment_id}/generate/cancel")
+async def cancel_segment_generation(segment_id: str) -> dict:
+    """GEN-06/GEN-07: true-kill cancel for a single in-flight segment
+    generate. No-ops ({"status": "not_running"}) if nothing is running for
+    this segment_id.
+
+    Order: (1) tts_client.cancel() — the true GPU-call kill (04-02), run
+    via run_in_threadpool since it's a sync httpx call, (2) task.cancel()
+    to stop the local asyncio task, (3) reset the row from "generating" to
+    "pending" — a user stop is not a failure, per 04-CONTEXT.md's
+    "clean reset-to-pending" (not "error"). CRITICAL (Pitfall 2): never
+    call release_generation() directly here — the lock is only released by
+    the task's own done-callback once regenerate_segment has truly
+    returned, so a stop→immediately-generate-again cycle can't race two
+    /synthesize calls."""
+    task = get_generation_task_by_label(f"segment:{segment_id}")
+    if task is None:
+        return {"status": "not_running"}
+
+    await run_in_threadpool(tts_client.cancel)
+
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    with Session(engine) as session:
+        segment = session.get(Segment, segment_id)
+        if segment is not None and segment.generation_status == "generating":
+            segment.generation_status = "pending"
+            session.add(segment)
+            session.commit()
+
+    return {"status": "cancelled"}
 
 
 class BulkReassignRequest(BaseModel):
@@ -984,14 +1059,15 @@ async def generate_project(project_id: str) -> dict:
     if not try_claim_generation(f"batch:{project_id}"):
         return {"status": "busy"}
 
+    label = f"batch:{project_id}"
     task = asyncio.create_task(run_batch_generation(project_id))
-    _running_generations[project_id] = task
+    register_generation_task(label, task)
     _background_tasks.add(task)
 
-    def _cleanup(completed_task: asyncio.Task, project_id: str = project_id) -> None:
+    def _cleanup(completed_task: asyncio.Task, label: str = label) -> None:
         _background_tasks.discard(completed_task)
-        if _running_generations.get(project_id) is completed_task:
-            _running_generations.pop(project_id, None)
+        if _running_generations.get(label) is completed_task:
+            _running_generations.pop(label, None)
         release_generation()
 
     task.add_done_callback(_cleanup)
@@ -1001,20 +1077,21 @@ async def generate_project(project_id: str) -> dict:
 
 @app.post("/projects/{project_id}/generate/cancel")
 async def cancel_generation(project_id: str) -> dict:
-    """T-03-27: cancel a live batch run. No-ops ({"status": "not_running"})
-    if nothing is running for this project.
+    """T-03-27/GEN-08: cancel a live batch run. No-ops
+    ({"status": "not_running"}) if nothing is running for this project.
 
-    # ponytail: tts_client.synthesize() is a sync httpx.post wrapped in
-    # run_in_threadpool (300s read timeout) — a Python thread can't be
-    # forcibly interrupted, so cancelling the segment currently mid-synth
-    # only takes effect once that HTTP call returns; this stops progression
-    # to the NEXT segment, it does not abort the in-flight one. Upgrade
-    # path if that ceiling ever matters: an async httpx client with real
-    # request cancellation, or a cancel endpoint on the TTS service itself.
-    """
+    04-03 lifts the prior best-effort ceiling documented here: this now
+    also calls tts_client.cancel() (the true GPU-call kill added in 04-02)
+    so the segment currently mid-synth actually aborts, not just the
+    progression to the next queued segment. As before, never call
+    release_generation() directly (Pitfall 2) — the lock frees only via
+    run_batch_generation's own done-callback once the underlying call has
+    truly stopped."""
     task = get_generation_task(project_id)
     if task is None:
         return {"status": "not_running"}
+
+    await run_in_threadpool(tts_client.cancel)
 
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
