@@ -8,6 +8,7 @@ the 1.7B model per call is the documented anti-pattern to avoid).
 import io
 import logging
 import threading
+import time
 
 import soundfile as sf
 import torch
@@ -67,8 +68,21 @@ class _CancelStoppingCriteria(StoppingCriteria):
     request_cancel() has been called, aborting generation promptly instead
     of running the full segment to completion."""
 
+    def __init__(self) -> None:
+        self._call_count = 0
+        self._first_call_at = time.monotonic()
+
     def __call__(self, input_ids, scores, **kwargs) -> bool:
-        return _cancel_event.is_set()
+        self._call_count += 1
+        cancelled = _cancel_event.is_set()
+        if cancelled:
+            elapsed_ms = (time.monotonic() - self._first_call_at) * 1000
+            logger.info(
+                f"_CancelStoppingCriteria: cancel observed on decode-step check "
+                f"#{self._call_count} ({elapsed_ms:.1f} ms since this criteria "
+                "instance was created)"
+            )
+        return cancelled
 
 
 class GenerationCancelled(Exception):
@@ -83,6 +97,64 @@ def request_cancel() -> None:
     as soon as the decode loop next checks _cancel_event."""
     logger.info("request_cancel() called — setting _cancel_event")
     _cancel_event.set()
+
+
+# D-02 hardware finding: passing stopping_criteria into
+# generate_custom_voice(**kwargs) does NOT reach the actual decode loop.
+# Read directly from the installed qwen-tts==0.1.1 wheel
+# (core/models/modeling_qwen3_tts.py): generate_custom_voice's **kwargs
+# correctly flows into Qwen3TTSForConditionalGeneration.generate(...), but
+# THAT method builds its own `talker_kwargs` dict from a hardcoded literal
+# list of keys (do_sample/top_k/top_p/.../repetition_penalty/...) that does
+# NOT include **kwargs — so stopping_criteria is silently dropped before it
+# ever reaches self.talker.generate(inputs_embeds=..., **talker_kwargs),
+# which IS the real transformers.GenerationMixin.generate() call that would
+# honor it. Confirmed live on the RX 9070 XT: an unpatched stopping_criteria
+# never interrupted generation (cancel-to-stop tracked the full uncancelled
+# baseline almost exactly, ~474s vs ~682s baseline for the same text).
+#
+# Fix: patch the ONE call site that matters — self.talker.generate, a
+# stable, standard Transformers API — rather than reimplementing
+# Qwen3TTSForConditionalGeneration.generate()'s much larger, qwen_tts
+# version-fragile body. If a future qwen-tts release starts forwarding
+# stopping_criteria itself, kwargs.setdefault below is a no-op on top of it.
+#
+# The speech_tokenizer.decode() vocoder stage AFTER the talker (converts
+# generated codes to a waveform) is a single torch.inference_mode() forward
+# pass, not a decode loop — genuinely not interruptible via stopping
+# criteria, but bounded by however many codes the (now-interruptible)
+# talker stage produced before stopping, so it stays fast.
+#
+# Both stages are wrapped with elapsed-time logging (not just the talker
+# patch) so a cancel-to-stop measurement can be attributed to "the talker
+# loop took a while to notice the cancel" vs. "the vocoder decode of
+# whatever partial codes existed took a while" — needed to actually
+# diagnose D-02 on real hardware rather than guess (CLAUDE.md: log the flow
+# extensively).
+_original_talker_generate = model.model.talker.generate
+_original_speech_tokenizer_decode = model.model.speech_tokenizer.decode
+
+
+def _talker_generate_with_cancel(*args, **kwargs):
+    kwargs.setdefault("stopping_criteria", StoppingCriteriaList([_CancelStoppingCriteria()]))
+    start = time.monotonic()
+    result = _original_talker_generate(*args, **kwargs)
+    elapsed_ms = (time.monotonic() - start) * 1000
+    logger.info(f"talker.generate() returned after {elapsed_ms:.1f} ms")
+    return result
+
+
+def _speech_tokenizer_decode_with_timing(*args, **kwargs):
+    start = time.monotonic()
+    result = _original_speech_tokenizer_decode(*args, **kwargs)
+    elapsed_ms = (time.monotonic() - start) * 1000
+    logger.info(f"speech_tokenizer.decode() (vocoder) returned after {elapsed_ms:.1f} ms")
+    return result
+
+
+model.model.talker.generate = _talker_generate_with_cancel
+model.model.speech_tokenizer.decode = _speech_tokenizer_decode_with_timing
+logger.info("Patched model.model.talker.generate to honor _cancel_event (D-02 fix)")
 
 
 def get_supported_speakers() -> list[str]:
