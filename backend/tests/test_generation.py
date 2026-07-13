@@ -523,7 +523,7 @@ def test_batch_regenerates_after_reassign_to_different_voice():
                 description="a different voice",
                 is_narrator=False,
                 voice_instructions="",
-                voice_preset="ryan",
+                voice_preset="bright_young_guy",
             )
         )
         session.commit()
