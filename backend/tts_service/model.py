@@ -7,10 +7,12 @@ the 1.7B model per call is the documented anti-pattern to avoid).
 
 import io
 import logging
+import threading
 
 import soundfile as sf
 import torch
 from qwen_tts import Qwen3TTSModel
+from transformers import StoppingCriteria, StoppingCriteriaList
 
 logger = logging.getLogger("tts_service.model")
 
@@ -50,6 +52,38 @@ logger.info("Default speaker chosen: %s", DEFAULT_SPEAKER)
 
 MAX_TEXT_LENGTH = 4000  # defensive cap; backend pre-chunks to ~800 chars (T-02-02)
 
+# D-01/D-02 immediate-cancel machinery (ARCHITECTURE.md "Capability 1 —
+# Immediate Cancel"). A single process-wide Event is correct — not a
+# per-request cancellation registry — because the backend's global
+# try_claim_generation/release_generation lock already guarantees at most
+# one synthesize_wav call in flight anywhere in the app at a time.
+_cancel_event = threading.Event()
+
+
+class _CancelStoppingCriteria(StoppingCriteria):
+    """Checked once per autoregressive decode step by Transformers'
+    generate() loop (reached via generate_custom_voice(**kwargs) ->
+    model.generate(..., stopping_criteria=...)). Returns True the moment
+    request_cancel() has been called, aborting generation promptly instead
+    of running the full segment to completion."""
+
+    def __call__(self, input_ids, scores, **kwargs) -> bool:
+        return _cancel_event.is_set()
+
+
+class GenerationCancelled(Exception):
+    """Raised by synthesize_wav when _cancel_event fired during the
+    generate call — turns a stopping-criteria-truncated partial result into
+    an explicit cancelled signal instead of silently returning a short WAV
+    (T-04-02)."""
+
+
+def request_cancel() -> None:
+    """Signal the in-flight (or next-to-start) synthesize_wav call to abort
+    as soon as the decode loop next checks _cancel_event."""
+    logger.info("request_cancel() called — setting _cancel_event")
+    _cancel_event.set()
+
 
 def get_supported_speakers() -> list[str]:
     return _supported_speakers
@@ -64,7 +98,16 @@ def synthesize_wav(text: str, speaker: str | None = None, instruct: str | None =
     surfaced directly from qwen-tts's own `_validate_speakers` (called
     internally by `generate_custom_voice`), which raises `ValueError` on an
     unsupported speaker (RESEARCH.md Don't Hand-Roll).
+
+    Raises GenerationCancelled if request_cancel() fired during the
+    generate call (D-01/D-02) — the mid-decode StoppingCriteria check.
     """
+    # Clear first, before any generate work, so a stale cancel from a prior
+    # call (T-04-01) can never abort this one — request_cancel() only
+    # matters from this point forward.
+    _cancel_event.clear()
+    logger.debug("synthesize_wav: _cancel_event cleared")
+
     if not text or not text.strip():
         raise ValueError("text must not be empty")
     if len(text) > MAX_TEXT_LENGTH:
@@ -79,11 +122,21 @@ def synthesize_wav(text: str, speaker: str | None = None, instruct: str | None =
     # so a blank/whitespace-only instruct is passed through as None rather
     # than an empty string (treated identically by the model, but None is
     # the more honest "no instruction" signal).
+    #
+    # stopping_criteria forwards through generate_custom_voice(**kwargs) ->
+    # _merge_generate_kwargs(**kwargs) -> model.generate(..., **gen_kwargs)
+    # (ARCHITECTURE.md "Capability 1"): checked once per decode step.
     wavs, sample_rate = model.generate_custom_voice(
         text=text,
         speaker=chosen_speaker,
         instruct=instruct.strip() if instruct and instruct.strip() else None,
+        stopping_criteria=StoppingCriteriaList([_CancelStoppingCriteria()]),
     )
+
+    if _cancel_event.is_set():
+        logger.info("synthesize_wav: cancel fired mid-generate — raising GenerationCancelled")
+        raise GenerationCancelled("synthesis aborted by request_cancel()")
+
     audio_array = wavs[0]
 
     buf = io.BytesIO()
