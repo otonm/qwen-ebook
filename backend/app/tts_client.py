@@ -14,12 +14,15 @@ Switches on settings.TTS_BACKEND:
 from __future__ import annotations
 
 import io
+import logging
 import struct
 import wave
 
 import httpx
 
 from app.config import settings
+
+logger = logging.getLogger("app.tts_client")
 
 _MOCK_SAMPLE_RATE = 24000
 _MOCK_DURATION_SECONDS = 0.3
@@ -57,6 +60,29 @@ def synthesize(text: str, speaker: str, instruct: str | None = None) -> bytes:
         )
         response.raise_for_status()
         return response.content
+
+    raise ValueError(f"Unknown TTS_BACKEND: {settings.TTS_BACKEND!r}")
+
+
+def cancel() -> None:
+    """Best-effort request to interrupt the in-flight synth call.
+
+    Fire-and-forget: a 5xx/timeout on the cancel POST itself must never
+    raise into the caller, because the caller still needs to release the
+    generation lock even if this call fails (T-04-05). Mock backend has
+    nothing to interrupt (mock synth is instant), so it's a no-op."""
+    if settings.TTS_BACKEND == "mock":
+        return
+
+    if settings.TTS_BACKEND == "http":
+        try:
+            httpx.post(
+                f"{settings.TTS_SERVICE_URL}/cancel",
+                timeout=httpx.Timeout(connect=2.0, read=2.0, write=2.0, pool=2.0),
+            ).raise_for_status()
+        except httpx.HTTPError as exc:
+            logger.warning(f"cancel() POST to tts_service failed (best-effort): {exc}")
+        return
 
     raise ValueError(f"Unknown TTS_BACKEND: {settings.TTS_BACKEND!r}")
 
