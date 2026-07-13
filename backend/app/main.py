@@ -45,15 +45,18 @@ from app.db import engine, init_db
 from app.epub_parser import EpubParseError, extract_text
 from app.generation_worker import (
     _running_generations,
+    consume_stop_requested,
     generation_progress_events,
     get_generation_task,
     get_generation_task_by_label,
     has_pending_generation_queue,
     is_any_generation_active,
     is_generation_running,
+    is_stop_requested,
     push_generation_event,
     register_generation_task,
     release_generation,
+    request_stop,
     run_batch_generation,
     try_claim_generation,
 )
@@ -536,19 +539,21 @@ async def trigger_character_preview(character_id: str) -> dict:
 async def cancel_character_preview(character_id: str) -> dict:
     """GEN-06/GEN-07: true-kill cancel for a single in-flight character
     preview, same structure as cancel_segment_generation, keyed on
-    "preview:{id}". No-ops if nothing is running. There is no per-
-    character status column to reset — the stale/absent
-    preview_audio_path already reflects "no preview" — so cancelling here
-    just stops the underlying call and lets the lock release via the
-    task's own done-callback (never release_generation() directly,
-    Pitfall 2)."""
+    "preview:{id}" — including NOT calling task.cancel() (see that
+    handler's docstring / generation_worker._stop_requested for why: it
+    would abandon the underlying worker thread instead of waiting for it,
+    breaking Pitfall 2's hold-until-truly-stopped guarantee). No-ops if
+    nothing is running. There is no per-character status column to reset
+    — the stale/absent preview_audio_path already reflects "no preview" —
+    so cancelling here just stops the underlying call and lets the lock
+    release via the task's own done-callback (never release_generation()
+    directly, Pitfall 2)."""
     task = get_generation_task_by_label(f"preview:{character_id}")
     if task is None:
         return {"status": "not_running"}
 
     await run_in_threadpool(tts_client.cancel)
 
-    task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await task
 
@@ -861,8 +866,26 @@ async def regenerate_segment(segment_id: str, version: int) -> None:
             segment = session.get(Segment, segment_id)
             if segment is None or segment.generation_version != version:
                 return
-            segment.generation_status = "error"
-            segment.generation_error = "TTS synthesis failed"
+            # GEN-06/GEN-07/GEN-08: a synth failure caused by an active
+            # cancel request (this segment's own, or its project's batch
+            # run) is not a genuine error — the caller explicitly asked to
+            # stop, and tts_client.cancel()'s real interrupt surfaces here
+            # as an ordinary synthesis exception (the real backend's 499
+            # raises via raise_for_status()). consume_stop_requested
+            # clears the segment-level flag (single-shot, nothing else
+            # needs it again); is_stop_requested only PEEKS the
+            # batch-level flag so run_batch_generation's own loop-top
+            # check still sees it and actually stops the batch from
+            # advancing to the next segment.
+            was_cancelled = consume_stop_requested(
+                f"segment:{segment_id}"
+            ) or is_stop_requested(f"batch:{segment.project_id}")
+            if was_cancelled:
+                segment.generation_status = "pending"
+                segment.generation_error = None
+            else:
+                segment.generation_status = "error"
+                segment.generation_error = "TTS synthesis failed"
             session.add(segment)
             session.commit()
         return
@@ -952,28 +975,46 @@ async def cancel_segment_generation(segment_id: str) -> dict:
     this segment_id.
 
     Order: (1) tts_client.cancel() — the true GPU-call kill (04-02), run
-    via run_in_threadpool since it's a sync httpx call, (2) task.cancel()
-    to stop the local asyncio task, (3) reset the row from "generating" to
-    "pending" — a user stop is not a failure, per 04-CONTEXT.md's
-    "clean reset-to-pending" (not "error"). CRITICAL (Pitfall 2): never
-    call release_generation() directly here — the lock is only released by
-    the task's own done-callback once regenerate_segment has truly
-    returned, so a stop→immediately-generate-again cycle can't race two
-    /synthesize calls."""
+    via run_in_threadpool since it's a sync httpx call — this is what
+    makes the underlying HTTP-boundary call actually return promptly on
+    real hardware; (2) plainly `await task` (no task.cancel()! — see
+    generation_worker._stop_requested's docstring: cancelling a task
+    awaiting run_in_threadpool abandons the worker thread instead of
+    waiting for it, which would release the lock the instant cancel() is
+    issued rather than once the call truly stops, the exact race Pitfall
+    2 forbids); (3) reset the row to "pending" — a user stop is not a
+    failure, per 04-CONTEXT.md's "clean reset-to-pending" (not "error").
+    Since the handler now waits for regenerate_segment to genuinely
+    finish rather than force-cancelling it, regenerate_segment's own
+    except-Exception branch will typically have already written "error"
+    by the time control returns here (the interrupted synth call surfaces
+    as a synthesis failure, same as a real one would) — this handler
+    unconditionally overrides any non-"complete" outcome back to
+    "pending" so a user-requested stop never shows as an error. A row
+    that happened to race to a genuine "complete" success despite the
+    cancel request is left alone rather than discarding valid audio.
+    CRITICAL (Pitfall 2): never call release_generation() directly here —
+    the lock is only released by the task's own done-callback once
+    regenerate_segment has truly returned, so a stop→immediately-
+    generate-again cycle can't race two /synthesize calls."""
     task = get_generation_task_by_label(f"segment:{segment_id}")
     if task is None:
         return {"status": "not_running"}
 
+    # Flags regenerate_segment's own except-Exception branch to write
+    # "pending" instead of "error" when it catches the interrupted call —
+    # consumed there (single-shot), see that branch's comment.
+    request_stop(f"segment:{segment_id}")
     await run_in_threadpool(tts_client.cancel)
 
-    task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await task
 
     with Session(engine) as session:
         segment = session.get(Segment, segment_id)
-        if segment is not None and segment.generation_status == "generating":
+        if segment is not None and segment.generation_status != "complete":
             segment.generation_status = "pending"
+            segment.generation_error = None
             session.add(segment)
             session.commit()
 
@@ -1083,17 +1124,25 @@ async def cancel_generation(project_id: str) -> dict:
     04-03 lifts the prior best-effort ceiling documented here: this now
     also calls tts_client.cancel() (the true GPU-call kill added in 04-02)
     so the segment currently mid-synth actually aborts, not just the
-    progression to the next queued segment. As before, never call
-    release_generation() directly (Pitfall 2) — the lock frees only via
-    run_batch_generation's own done-callback once the underlying call has
-    truly stopped."""
+    progression to the next queued segment. Deliberately does NOT call
+    task.cancel() (see generation_worker._stop_requested's docstring):
+    that would abandon whatever segment is currently mid-run_in_threadpool
+    instead of waiting for it, releasing the lock the instant cancel() is
+    issued rather than once the call truly stops. Instead: request_stop
+    flags the batch loop to stop advancing to the next segment (checked at
+    the top of each iteration in run_batch_generation), then this handler
+    plainly `await`s the task so it only returns once the currently-
+    settling segment (and the loop noticing the stop flag) has genuinely
+    finished. As before, never call release_generation() directly
+    (Pitfall 2) — the lock frees only via run_batch_generation's own
+    done-callback once the underlying call has truly stopped."""
     task = get_generation_task(project_id)
     if task is None:
         return {"status": "not_running"}
 
+    request_stop(f"batch:{project_id}")
     await run_in_threadpool(tts_client.cancel)
 
-    task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await task
 
