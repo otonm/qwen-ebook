@@ -36,12 +36,12 @@ logger = logging.getLogger(__name__)
 # never share (or collide on) the same queue.
 _generation_progress_queues: dict[str, asyncio.Queue] = {}
 
-# T-03-25/T-03-26: keyed by project_id, tracks the live run_batch_generation
-# task (if any) so a second Generate All (or the worker's own crash-leftover
-# stale-reset) can tell a genuinely in-flight run apart from an orphaned
-# "generating" row. main.py registers into this dict directly and removes
-# the entry via a done-callback, same registry discipline as
-# _generation_progress_queues.
+# T-03-25/T-03-26, generalized in 04-03 (Pitfall 3): keyed by the same
+# label strings try_claim_generation already receives — "segment:{id}",
+# "preview:{id}", "batch:{id}" — so EVERY kind of generation (not just
+# batch) has an addressable task a cancel endpoint can look up. main.py
+# registers via register_generation_task and removes the entry via a
+# done-callback, same registry discipline as _generation_progress_queues.
 _running_generations: dict[str, asyncio.Task] = {}
 
 # Single-flight guard: at most one generation — a character preview, a
@@ -82,15 +82,33 @@ def _get_generation_queue(project_id: str) -> asyncio.Queue:
     return _generation_progress_queues.setdefault(project_id, asyncio.Queue())
 
 
-def is_generation_running(project_id: str) -> bool:
-    """True if `project_id` has a live (not-yet-done) run_batch_generation
-    task registered."""
-    task = _running_generations.get(project_id)
+def register_generation_task(label: str, task: asyncio.Task) -> None:
+    """Register `task` under `label` (the exact string passed to
+    try_claim_generation, e.g. "segment:{id}"/"preview:{id}"/"batch:{id}")
+    so a cancel endpoint can later resolve it via get_generation_task_by_label."""
+    _running_generations[label] = task
+
+
+def get_generation_task_by_label(label: str) -> asyncio.Task | None:
+    return _running_generations.get(label)
+
+
+def is_generation_running_by_label(label: str) -> bool:
+    """True if `label` has a live (not-yet-done) task registered."""
+    task = _running_generations.get(label)
     return task is not None and not task.done()
 
 
+def is_generation_running(project_id: str) -> bool:
+    """Back-compat for generate_project: delegates to the "batch:{id}"
+    label."""
+    return is_generation_running_by_label(f"batch:{project_id}")
+
+
 def get_generation_task(project_id: str) -> asyncio.Task | None:
-    return _running_generations.get(project_id)
+    """Back-compat for generate_project/delete_project: delegates to the
+    "batch:{id}" label."""
+    return get_generation_task_by_label(f"batch:{project_id}")
 
 
 async def push_generation_event(project_id: str, event_type: str, payload: dict) -> None:
