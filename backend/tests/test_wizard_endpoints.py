@@ -1,6 +1,8 @@
 """Wizard backend endpoint tests (Plan 02-04): preset voice list, character
-PATCH/merge (WIZ-02/WIZ-03), and eager race-safe voice-preview generation +
-serving (WIZ-04/WIZ-05, Pitfall 5).
+PATCH/merge (WIZ-02/WIZ-03), and explicit-trigger race-safe voice-preview
+generation + serving (WIZ-04/WIZ-05, Pitfall 5). PATCH invalidates a stale
+preview but never auto-generates — generation only fires via
+POST /characters/{id}/preview.
 
 Runs entirely against LLM_BACKEND=mock/TTS_BACKEND=mock so it needs no
 network/GPU/Grok key, same discipline as test_analysis_pipeline.py.
@@ -166,7 +168,7 @@ def test_merge_unknown_ids_404s():
     assert response.status_code == 404
 
 
-# --- Eager voice preview generation + serving (WIZ-04/WIZ-05) -----------
+# --- Explicit-trigger voice preview generation + serving (WIZ-04/WIZ-05) -
 
 
 def _wait_for_preview(character_id: str, timeout_seconds: float = 5.0) -> None:
@@ -188,19 +190,52 @@ def test_preview_not_ready_returns_409():
     assert response.status_code == 409
 
 
-def test_patch_voice_eagerly_generates_preview():
+def test_patch_voice_invalidates_but_does_not_auto_generate():
+    """A voice-field PATCH (preset or instructions) must NOT eagerly kick
+    off generation — the user triggers a fresh preview explicitly via
+    POST /characters/{id}/preview. This mirrors GEN-03's invalidate-only
+    contract for segments."""
     project = _seed_project()
     character_id = project["characters"][0]["id"]
 
+    # Establish a preview first via the explicit trigger.
+    trigger = client.post(f"/characters/{character_id}/preview")
+    assert trigger.status_code == 200
+    _wait_for_preview(character_id)
+    assert client.get(f"/characters/{character_id}/preview.wav").status_code == 200
+
+    # A voice-field PATCH invalidates the now-stale preview...
     response = client.patch(f"/characters/{character_id}", json={"voice_preset": ""})
     assert response.status_code == 200
 
-    _wait_for_preview(character_id)
+    # ...but does not regenerate it automatically. Give any accidental
+    # background task a moment to (not) run before asserting.
+    time.sleep(0.3)
+    assert client.get(f"/characters/{character_id}/preview.wav").status_code == 409
 
+    # The user's explicit trigger still works and produces a real preview.
+    trigger_again = client.post(f"/characters/{character_id}/preview")
+    assert trigger_again.status_code == 200
+    _wait_for_preview(character_id)
     preview_response = client.get(f"/characters/{character_id}/preview.wav")
     assert preview_response.status_code == 200
     assert preview_response.headers["content-type"] == "audio/wav"
     assert len(preview_response.content) > 0
+
+
+def test_patch_non_voice_field_leaves_existing_preview_intact():
+    """Renaming a character (no voice_preset/voice_instructions in the
+    patch) must not touch an already-generated preview."""
+    project = _seed_project()
+    character_id = project["characters"][0]["id"]
+
+    assert client.post(f"/characters/{character_id}/preview").status_code == 200
+    _wait_for_preview(character_id)
+
+    response = client.patch(f"/characters/{character_id}", json={"name": "Renamed"})
+    assert response.status_code == 200
+
+    assert client.get(f"/characters/{character_id}/preview.wav").status_code == 200
 
 
 def test_trigger_preview_generates_on_demand():
@@ -228,9 +263,11 @@ def test_trigger_preview_missing_character_404s():
     assert response.status_code == 404
 
 
-def test_rapid_reassignment_race_last_wins(monkeypatch):
+def test_rapid_preview_trigger_race_last_wins(monkeypatch):
     """Pitfall 5: a slow first generation must not clobber a faster,
-    newer second generation's preview once both settle."""
+    newer second generation's preview once both settle. Now that PATCH no
+    longer auto-generates, the race is driven by two rapid explicit
+    POST /characters/{id}/preview calls against two different presets."""
 
     def _controlled_synthesize(text: str, speaker: str) -> bytes:
         if speaker == "slow":
@@ -244,9 +281,14 @@ def test_rapid_reassignment_race_last_wins(monkeypatch):
     project = _seed_project()
     character_id = project["characters"][0]["id"]
 
-    first = client.patch(f"/characters/{character_id}", json={"voice_preset": "slow"})
+    assign_slow = client.patch(f"/characters/{character_id}", json={"voice_preset": "slow"})
+    assert assign_slow.status_code == 200
+    first = client.post(f"/characters/{character_id}/preview")
     assert first.status_code == 200
-    second = client.patch(f"/characters/{character_id}", json={"voice_preset": "fast"})
+
+    assign_fast = client.patch(f"/characters/{character_id}", json={"voice_preset": "fast"})
+    assert assign_fast.status_code == 200
+    second = client.post(f"/characters/{character_id}/preview")
     assert second.status_code == 200
 
     # Give both background generations (slow ~0.3s, fast ~0.02s) time to

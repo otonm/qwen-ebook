@@ -352,11 +352,14 @@ class CharacterPatch(BaseModel):
 @app.patch("/characters/{character_id}")
 async def patch_character(character_id: str, patch: CharacterPatch) -> dict:
     """WIZ-02 rename/edit, WIZ-03 voice assign. A voice-field change
-    (voice_preset and/or voice_instructions present) bumps voice_version
-    and eagerly kicks off race-safe preview generation (WIZ-04/WIZ-05,
-    Pitfall 5) — see _generate_preview."""
+    (voice_preset and/or voice_instructions present) INVALIDATES the stale
+    preview (bumps voice_version, clears preview_audio_path) but does NOT
+    auto-fire regeneration — mirrors patch_segment's GEN-03 invalidate-only
+    pattern. The user triggers a fresh preview explicitly via
+    POST /characters/{id}/preview (trigger_character_preview)."""
     voice_changed = patch.voice_preset is not None or patch.voice_instructions is not None
 
+    old_preview_path: str | None = None
     with Session(engine) as session:
         character = session.get(Character, character_id)
         if character is None:
@@ -372,17 +375,16 @@ async def patch_character(character_id: str, patch: CharacterPatch) -> dict:
             character.voice_instructions = patch.voice_instructions
         if voice_changed:
             character.voice_version += 1
+            old_preview_path = character.preview_audio_path
+            character.preview_audio_path = None
 
         session.add(character)
         session.commit()
         session.refresh(character)
         result = _serialize_character(character)
-        version = character.voice_version
 
-    if voice_changed:
-        task = asyncio.create_task(_generate_preview(character_id, version))
-        _background_tasks.add(task)
-        task.add_done_callback(_background_tasks.discard)
+    if old_preview_path:
+        Path(old_preview_path).unlink(missing_ok=True)
 
     return result
 

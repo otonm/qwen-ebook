@@ -36,18 +36,28 @@ _OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completion
 CAST_ANALYSIS_SYSTEM_PROMPT = """You are preparing narrative text for multi-voice audio narration.
 
 1. Identify the cast: the narrator plus every distinct speaking character
-   in the text. For each character, infer age, gender, and personality
-   traits from context (word choice, actions, how others address them,
-   how they speak) and summarize them in a short `description`. Mark the
-   narrator with `is_narrator=true`.
+   in the text. For each character, infer from context ONLY the traits
+   that shape how a voice actor should sound when reading their lines —
+   age, gender, vocal tone/register, typical pace or rhythm of speech,
+   accent or speech-pattern cues, and general emotional demeanor (e.g.
+   "gruff and clipped", "warm and unhurried", "high-pitched and excitable")
+   — and summarize them in a short `description`. Do NOT include the
+   character's occupation, role in the plot, relationships to other
+   characters, backstory, or any other story detail that has no bearing on
+   how they sound — a costume designer's brief, not a character bio. Mark
+   the narrator with `is_narrator=true`.
 
 2. Split the text into an ordered list of `segments`. Each segment is a
    contiguous span of narration, or a single character's uninterrupted
    dialogue — never mix two speakers into one segment. Tag each segment
    with the speaking `character_name` (must match a name in your cast
-   list) and a short `voice_instructions` phrase describing how it should
-   be spoken (e.g. "narrates in a soothing voice", "gaining confidence",
-   "shouting in panic").
+   list) and a short `voice_instructions` phrase — a delivery direction for
+   a voice actor covering only tone, pace, volume, and emotional inflection
+   for that specific line (e.g. "narrates in a soothing voice", "gaining
+   confidence", "shouting in panic", "whispered, hesitant"). Do NOT
+   restate what is happening in the scene, describe physical actions or
+   gestures, or summarize plot/story content in `voice_instructions` —
+   it is spoken-delivery guidance only, never a scene description.
 
 3. If you are given a `running_cast` (already-detected characters from
    earlier in this same book) and `recent_segments` (the most recently

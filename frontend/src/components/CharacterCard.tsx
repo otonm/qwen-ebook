@@ -1,10 +1,11 @@
-import { Merge as MergeIcon, Pause, Play } from "lucide-react"
+import { Loader2, Merge as MergeIcon, Pause, Play } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 
 import {
   mergeCharacter,
   patchCharacter,
   previewUrl,
+  triggerCharacterPreview,
   type Character,
   type MergeUndoSnapshot,
   type VoicePreset,
@@ -53,9 +54,18 @@ export function CharacterCard({
     character.voice_instructions
   )
   const [isPlaying, setIsPlaying] = useState(false)
+  const [isGenerating, setIsGenerating] = useState(false)
   const [mergeTargetId, setMergeTargetId] = useState<string | null>(null)
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false)
   const audioRef = useRef<HTMLAudioElement>(null)
+  const generateTimeoutRef = useRef<number | null>(null)
+  const hasPreview = Boolean(character.preview_audio_path)
+
+  useEffect(() => {
+    return () => {
+      if (generateTimeoutRef.current !== null) window.clearTimeout(generateTimeoutRef.current)
+    }
+  }, [])
 
   // Keep local edit buffers aligned when the underlying character record
   // changes for a reason other than this card's own edits (merge, initial
@@ -99,6 +109,30 @@ export function CharacterCard({
     }
   }
 
+  // The preview trigger is fire-and-forget (server generates in the
+  // background); onCastRefresh's staggered refetch chain (last refetch at
+  // 3.5s) lands the new preview_audio_path, which switches this card from
+  // the Generate button to Play — isGenerating itself doesn't need to be
+  // reset for that to happen, since the Generate branch simply isn't
+  // rendered once hasPreview is true. The 6s timeout below only matters for
+  // a silent server-side failure (_generate_preview logs and returns
+  // without ever setting preview_audio_path): it reverts the button so the
+  // user can retry instead of it spinning forever.
+  // ponytail: re-editing the voice within that 6s window after a
+  // successful generate can leave the Generate button briefly disabled —
+  // acceptable ceiling, not worth an extra ref just to close a few-second
+  // gap nobody is likely to hit.
+  async function handleGenerate() {
+    setIsGenerating(true)
+    try {
+      await triggerCharacterPreview(character.id)
+      onCastRefresh()
+      generateTimeoutRef.current = window.setTimeout(() => setIsGenerating(false), 6000)
+    } catch {
+      setIsGenerating(false)
+    }
+  }
+
   async function confirmMerge() {
     if (!mergeTargetId) return
     const { undo } = await mergeCharacter(character.id, mergeTargetId)
@@ -113,7 +147,6 @@ export function CharacterCard({
   }
 
   const mergeTarget = otherCharacters.find((c) => c.id === mergeTargetId)
-  const hasPreview = Boolean(character.preview_audio_path)
 
   return (
     <div className="flex flex-col gap-4 rounded-lg bg-secondary p-4">
@@ -123,7 +156,7 @@ export function CharacterCard({
           value={name}
           onChange={(e) => setName(e.target.value)}
           onBlur={handleNameBlur}
-          className="border-none bg-transparent p-0 text-lg font-semibold shadow-none focus-visible:ring-0"
+          className="text-lg font-semibold"
         />
         {character.is_narrator && (
           <Badge variant="secondary" className="shrink-0 text-xs font-semibold">
@@ -168,20 +201,36 @@ export function CharacterCard({
       </div>
 
       <div className="flex items-center gap-2">
-        <Button
-          type="button"
-          size="icon"
-          variant={isPlaying ? "default" : "outline"}
-          disabled={!hasPreview}
-          onClick={togglePlayback}
-          aria-label={
-            isPlaying
-              ? `Pause preview for ${character.name}`
-              : `Play preview for ${character.name}`
-          }
-        >
-          {isPlaying ? <Pause /> : <Play />}
-        </Button>
+        {hasPreview ? (
+          <Button
+            type="button"
+            size="icon"
+            variant={isPlaying ? "default" : "outline"}
+            onClick={togglePlayback}
+            aria-label={
+              isPlaying
+                ? `Pause preview for ${character.name}`
+                : `Play preview for ${character.name}`
+            }
+          >
+            {isPlaying ? <Pause /> : <Play />}
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={isGenerating}
+            onClick={() => void handleGenerate()}
+            aria-label={`Generate voice preview for ${character.name}`}
+          >
+            {isGenerating ? (
+              <Loader2 className="animate-spin" />
+            ) : (
+              "Generate"
+            )}
+          </Button>
+        )}
         {hasPreview && (
           <Badge className="bg-primary text-primary-foreground">Voice assigned</Badge>
         )}
