@@ -16,7 +16,7 @@ key-files:
     - backend/tests/test_generation.py
 
 key-decisions:
-  - "5 fixed presets replace the 10 raw-speaker-id roster; each has a fleshed-out 2-3 sentence steering description the LLM adapts per character, not a generic label"
+  - "5 fixed presets (later 6, see checkpoint resolution below) replace the 10 raw-speaker-id roster; each has a fleshed-out 2-3 sentence steering description the LLM adapts per character, not a generic label"
   - "voice_preset is now a required Pydantic Literal on CharacterSuggestion (OpenRouter strict json_schema enforces a valid pick) instead of an absent/free-text field"
   - "Character.voice_preset stores a preset ID, not a raw Qwen speaker name — preset_speaker() is the single resolution point at both TTS synth call sites"
   - "regenerate_segment now merges character.voice_instructions (adapted base) + segment.voice_instructions (delivery) via merge_instructions() into the final instruct AND feeds that merged string into compute_cache_key(), so a character base-voice edit naturally busts the segment cache"
@@ -25,7 +25,7 @@ key-decisions:
 # Metrics
 duration: ~35min
 completed: 2026-07-13
-status: tasks-1-4-complete-checkpoint-pending
+status: complete
 ---
 
 # Quick Task 260713-dye: Rework the presets feature — 5 fixed voice personas Summary
@@ -106,9 +106,18 @@ The plan's final task is `type="checkpoint:human-verify" gate="blocking"` and re
 - Backend implementation and all automated verification (full pytest suite, ruff strict, `python -m app.voices` self-check) is complete and green (excluding the one documented environmental integration-test failure, unrelated to this rework).
 - Not yet ready to close this quick task: the real-key manual UAT checkpoint above is outstanding and requires a human with `OPENROUTER_API_KEY` access and the ability to listen to generated audio.
 
+## Checkpoint Resolved — 2026-07-13
+
+Human ran real-key verification per the steps above. It surfaced a real gap: the
+5 fixed presets had no mature-male option, so an "Old Man" character was cast to
+`middle_sultry_woman` (a female preset) with only the description text patched
+to say "man" — the underlying Qwen speaker stayed female. Fixed by adding a 6th
+preset, `gruff_older_man` (speaker `uncle_fu`), in `2807dc9`. Re-verified
+end-to-end on the real GPU pod afterward — approved.
+
 ---
 *Quick task: 260713-dye*
-*Status: Tasks 1-4 complete; Task 5 (checkpoint:human-verify, blocking) pending human action*
+*Status: Complete — all 5 tasks done, checkpoint approved (with 1 follow-up fix: 6th preset added)*
 
 ## Self-Check: PASSED
 

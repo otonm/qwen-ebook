@@ -31,7 +31,7 @@ See: .planning/PROJECT.md (updated 2026-07-11)
 Phase: Milestone v1.0 complete
 Plan: —
 Status: Awaiting next milestone
-Last activity: 2026-07-13 - Completed quick task 260713-dye (tasks 1-4): Rework the presets feature into 5 fixed voice personas — human-verify checkpoint pending
+Last activity: 2026-07-13 - Completed quick task 260713-dye: Rework the presets feature into fixed voice personas (5, +1 follow-up = 6) — checkpoint approved, task closed
 
 ## Performance Metrics
 
