@@ -109,7 +109,10 @@ def test_segment_generate_blocks_character_preview_across_projects(monkeypatch):
     assert blocked.status_code == 409
 
     thread.join()
-    assert results["segment"].status_code == 200
+    # 04-03: generate_segment is now fire-and-return 202, not a synchronous
+    # 200 — the lock is still held (checked above) for the spawned task's
+    # full duration via _spawn_claimed_generation's done-callback.
+    assert results["segment"].status_code == 202
     _wait_for_idle()
 
 
@@ -138,8 +141,13 @@ def test_character_preview_blocks_segment_generate_while_in_flight(monkeypatch):
 
     _wait_for_idle()
     # Segment was never flipped to "generating" by the rejected attempt —
-    # a normal generate call now succeeds cleanly.
-    assert client.post(f"/segments/{seed['segment_id']}/generate").status_code == 200
+    # a normal generate call now succeeds cleanly (202: fire-and-return).
+    assert client.post(f"/segments/{seed['segment_id']}/generate").status_code == 202
+    # This last call is now fire-and-return (04-03) and still uses the
+    # slow monkeypatched synthesize above — wait for it to actually finish
+    # and release the lock before the test ends, or the still-running
+    # background task leaks the held lock into the next test.
+    _wait_for_idle()
 
 
 def test_batch_generation_blocks_per_row_generate_in_different_project(monkeypatch):
@@ -199,7 +207,11 @@ def test_batch_generation_blocks_per_row_generate_in_different_project(monkeypat
     assert busy.json()["status"] in ("already_running", "busy")
 
     _wait_for_idle(timeout=10.0)
-    assert client.post(f"/segments/{other['segment_id']}/generate").status_code == 200
+    assert client.post(f"/segments/{other['segment_id']}/generate").status_code == 202
+    # This trailing call still spawns against the slow monkeypatched
+    # synthesize above (04-03: fire-and-return) — wait for it to actually
+    # finish so it doesn't leak a held lock into the next test.
+    _wait_for_idle()
 
 
 def test_lock_releases_after_batch_cancel(monkeypatch):
@@ -223,4 +235,8 @@ def test_lock_releases_after_batch_cancel(monkeypatch):
     assert cancel.status_code == 200
 
     _wait_for_idle()
-    assert client.post(f"/segments/{seed['segment_id']}/generate").status_code == 200
+    assert client.post(f"/segments/{seed['segment_id']}/generate").status_code == 202
+    # Trailing call still spawns against the slow monkeypatched synthesize
+    # above (04-03: fire-and-return) — wait for it to finish so it doesn't
+    # leak a held lock into the next test.
+    _wait_for_idle()

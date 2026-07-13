@@ -36,12 +36,12 @@ logger = logging.getLogger(__name__)
 # never share (or collide on) the same queue.
 _generation_progress_queues: dict[str, asyncio.Queue] = {}
 
-# T-03-25/T-03-26: keyed by project_id, tracks the live run_batch_generation
-# task (if any) so a second Generate All (or the worker's own crash-leftover
-# stale-reset) can tell a genuinely in-flight run apart from an orphaned
-# "generating" row. main.py registers into this dict directly and removes
-# the entry via a done-callback, same registry discipline as
-# _generation_progress_queues.
+# T-03-25/T-03-26, generalized in 04-03 (Pitfall 3): keyed by the same
+# label strings try_claim_generation already receives — "segment:{id}",
+# "preview:{id}", "batch:{id}" — so EVERY kind of generation (not just
+# batch) has an addressable task a cancel endpoint can look up. main.py
+# registers via register_generation_task and removes the entry via a
+# done-callback, same registry discipline as _generation_progress_queues.
 _running_generations: dict[str, asyncio.Task] = {}
 
 # Single-flight guard: at most one generation — a character preview, a
@@ -78,19 +78,85 @@ def release_generation() -> None:
     _active_generation_label = None
 
 
+# 04-03/Pitfall 2: labels with a cancel in progress. Empirically, cancelling
+# an asyncio Task that's awaiting starlette's run_in_threadpool (anyio
+# to_thread) does NOT wait for the underlying worker thread to finish —
+# the await unblocks almost immediately while the thread keeps running
+# detached (verified directly against this app's installed anyio/starlette
+# versions, contradicting the naive assumption that task.cancel() + await
+# blocks for the real call's full duration). Calling task.cancel() would
+# therefore make _spawn_claimed_generation's done-callback (and
+# run_batch_generation's per-segment loop) treat the generation as
+# finished — and release the lock / advance to the next segment — the
+# instant task.cancel() is issued, exactly the race this plan's "must_haves"
+# truth forbids ("never released merely because task.cancel() was issued").
+# So cancel handlers never call task.cancel(): they call tts_client.cancel()
+# (the real interrupt — server-side StoppingCriteria on real hardware) and
+# then plainly `await task`, which only returns once the underlying call
+# has ACTUALLY finished (interrupted quickly by the server, or run to its
+# natural completion if the interrupt didn't land). The batch loop is the
+# one case with a "next item" to skip, so it additionally consults this
+# request-to-stop set between segments — set by cancel_generation, cleared
+# by consume_stop_requested — to break out of the loop after the
+# currently-settling segment instead of proceeding to the next one.
+_stop_requested: set[str] = set()
+
+
+def request_stop(label: str) -> None:
+    _stop_requested.add(label)
+
+
+def consume_stop_requested(label: str) -> bool:
+    """True if a stop was requested for `label` since the last check;
+    clears the flag so a stale request can't linger into a future run."""
+    if label in _stop_requested:
+        _stop_requested.discard(label)
+        return True
+    return False
+
+
+def is_stop_requested(label: str) -> bool:
+    """Non-consuming peek — used where a DIFFERENT consumer still needs to
+    observe the same flag afterward. E.g. regenerate_segment peeks
+    "batch:{project_id}" to decide whether its own synth failure was
+    caused by a cancel (so it can write "pending" instead of "error")
+    without clearing the flag out from under run_batch_generation's own
+    loop-top consume_stop_requested check, which is what actually stops
+    the batch from advancing to the next segment."""
+    return label in _stop_requested
+
+
 def _get_generation_queue(project_id: str) -> asyncio.Queue:
     return _generation_progress_queues.setdefault(project_id, asyncio.Queue())
 
 
-def is_generation_running(project_id: str) -> bool:
-    """True if `project_id` has a live (not-yet-done) run_batch_generation
-    task registered."""
-    task = _running_generations.get(project_id)
+def register_generation_task(label: str, task: asyncio.Task) -> None:
+    """Register `task` under `label` (the exact string passed to
+    try_claim_generation, e.g. "segment:{id}"/"preview:{id}"/"batch:{id}")
+    so a cancel endpoint can later resolve it via get_generation_task_by_label."""
+    _running_generations[label] = task
+
+
+def get_generation_task_by_label(label: str) -> asyncio.Task | None:
+    return _running_generations.get(label)
+
+
+def is_generation_running_by_label(label: str) -> bool:
+    """True if `label` has a live (not-yet-done) task registered."""
+    task = _running_generations.get(label)
     return task is not None and not task.done()
 
 
+def is_generation_running(project_id: str) -> bool:
+    """Back-compat for generate_project: delegates to the "batch:{id}"
+    label."""
+    return is_generation_running_by_label(f"batch:{project_id}")
+
+
 def get_generation_task(project_id: str) -> asyncio.Task | None:
-    return _running_generations.get(project_id)
+    """Back-compat for generate_project/delete_project: delegates to the
+    "batch:{id}" label."""
+    return get_generation_task_by_label(f"batch:{project_id}")
 
 
 async def push_generation_event(project_id: str, event_type: str, payload: dict) -> None:
@@ -162,13 +228,20 @@ async def run_batch_generation(project_id: str) -> None:
     aborts the rest (A4). Ends with a blocking join over the complete
     segments' audio (Open Question 1).
 
-    Cancellation (T-03-27): asyncio.CancelledError is a BaseException, not
-    an Exception, so it is never caught by the `except Exception` blocks
-    below — cancel() propagates straight out of this coroutine, skipping
-    the rest of the loop AND the blocking join. main.py's cancel endpoint
-    relies on exactly this: it owns the post-cancel row reset and terminal
-    event push (push_generation_event); this function pushes neither on
-    cancellation."""
+    Cancellation: main.py's POST /projects/{id}/generate/cancel (T-03-27,
+    extended 04-03 for GEN-08) stops this loop via consume_stop_requested,
+    checked at the top of each iteration — NOT via task.cancel(), which
+    would abandon whatever segment is currently mid-run_in_threadpool
+    without waiting for it to truly finish (Pitfall 2; see
+    generation_worker._stop_requested's docstring for why). The cancel
+    endpoint owns the post-cancel row reset and terminal event push
+    (push_generation_event); this function pushes neither on a stop.
+    delete_project is the one remaining caller that still uses a raw
+    task.cancel() (T-03-27's original mechanism) — acceptable there
+    because the project and its rows are being deleted regardless of
+    exactly when the lock frees, so asyncio.CancelledError (a
+    BaseException, uncaught by the `except Exception` blocks below) is
+    still a valid way to unwind this coroutine early in that one case."""
     # Lazy import: main.py imports this module at module load time, so a
     # top-level `from app.main import regenerate_segment` here would be
     # circular. By the time this coroutine actually runs, app.main has
@@ -206,6 +279,18 @@ async def run_batch_generation(project_id: str) -> None:
 
         total = len(segment_ids)
         for index, segment_id in enumerate(segment_ids, start=1):
+            # 04-03/Pitfall 2: checked at the TOP of each iteration so the
+            # currently-settling segment (whatever cancel_generation just
+            # interrupted via tts_client.cancel()) always finishes its own
+            # try/except below before the loop honors a stop request — this
+            # is what actually stops progression to the next segment now
+            # that cancel handlers no longer call task.cancel() (see
+            # generation_worker._stop_requested's docstring).
+            if consume_stop_requested(f"batch:{project_id}"):
+                logger.info(
+                    f"batch generation for project {project_id} stopped by cancel request"
+                )
+                return
             with Session(engine) as session:
                 segment = session.get(Segment, segment_id)
                 if segment is None:
