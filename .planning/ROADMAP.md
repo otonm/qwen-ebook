@@ -82,8 +82,17 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
   3. When the 0.6B model is selected, the UI warns the user that free-text voice-instruction steering isn't supported by that checkpoint
   4. Segments generated after a model swap reflect the newly selected model — no stale cached audio from the previously loaded model is served
 
-**Plans**: TBD
+**Plans**: 3 plans
 **UI hint**: yes
+
+**Wave 1** *(parallel — disjoint files)*
+
+- [ ] 05-01-PLAN.md — tts_service engine: singleton → ensure_loaded(model_id) swap + POST /model/{id}/load + real-hardware VRAM swap-cycle test
+- [ ] 05-02-PLAN.md — backend orchestration: Project.tts_model column, model_id in cache key, tts_client.load_model, POST /projects/{id}/model handler with lock + segment/preview invalidation (D-02/D-05/D-06)
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 05-03-PLAN.md — frontend + integration: Config Panel Model dropdown (D-01/D-02/D-03), disabled Voice Instructions cells on 0.6B (D-04), end-to-end human-verify on the deploy target
 
 ### Phase 6: Config Panel — Output Format, Filename & Download
 
