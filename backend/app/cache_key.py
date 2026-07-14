@@ -41,6 +41,8 @@ if __name__ == "__main__":
     same_a = compute_cache_key("preset-a", "warm tone", "Hello there.")
     same_b = compute_cache_key("preset-a", "warm tone", "Hello there.")
     different = compute_cache_key("preset-a", "warm tone", "Goodbye there.")
+    different_model = compute_cache_key("preset-a", "warm tone", "Hello there.", model_id="0.6b")
     assert same_a == same_b, "identical inputs must produce identical digests"
     assert same_a != different, "different text must produce different digests"
+    assert same_a != different_model, "different model_id must produce different digests"
     print("cache_key self-check passed")
