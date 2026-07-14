@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Generation UX & Config Rework
-current_phase: 05
-current_phase_name: on-demand-model-swap
+current_phase: 6
+current_phase_name: Config Panel — Output Format, Filename & Download
 status: executing
 stopped_at: Phase 5 UI-SPEC approved
-last_updated: "2026-07-14T11:50:22.680Z"
+last_updated: "2026-07-14T12:47:59.245Z"
 last_activity: 2026-07-14
-last_activity_desc: Phase 05 execution started
+last_activity_desc: Phase 05 complete, transitioned to Phase 6
 progress:
   total_phases: 7
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 7
-  completed_plans: 4
-  percent: 14
+  completed_plans: 7
+  percent: 29
 ---
 
 # Project State
@@ -28,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-07-13)
 
 ## Current Position
 
-Phase: 05 (on-demand-model-swap) — EXECUTING
-Plan: 1 of 3
+Phase: 6 — Config Panel — Output Format, Filename & Download
+Plan: Not started
 Status: Executing Phase 05
-Last activity: 2026-07-14 — Phase 05 execution started
+Last activity: 2026-07-14 — Phase 05 complete, transitioned to Phase 6
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -39,7 +39,7 @@ Progress: [░░░░░░░░░░] 0%
 
 **Velocity:**
 
-- Total plans completed: 16
+- Total plans completed: 19
 - Average duration: - min
 - Total execution time: 0 hours
 
@@ -50,6 +50,7 @@ Progress: [░░░░░░░░░░] 0%
 | 01 | 3 | - | - |
 | 03 | 9 | - | - |
 | 04 | 4 | - | - |
+| 05 | 3 | - | - |
 
 **Recent Trend:**
 

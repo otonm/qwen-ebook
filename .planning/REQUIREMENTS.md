@@ -20,7 +20,7 @@ Requirements for the "Generation UX & Config Rework" milestone. Each maps to roa
 ### Config Panel (CFG)
 
 - [x] **CFG-04**: User can choose between two Qwen TTS model sizes per project — 1.7B ("higher quality") and 0.6B ("faster") — loaded on demand (only one resident in VRAM at a time)
-- [ ] **CFG-05**: When the 0.6B model is selected, the UI warns the user that free-text voice-instruction steering is not supported by that checkpoint
+- [x] **CFG-05**: When the 0.6B model is selected, the UI warns the user that free-text voice-instruction steering is not supported by that checkpoint
 - [ ] **CFG-06**: User can choose the output audio format: FLAC, MP3, or Opus (WAV is dropped as an option)
 - [ ] **CFG-07**: User can set a custom output filename before generating the final file
 - [ ] **CFG-08**: User can download the finished, joined audio file via a blue "Download" button once generation completes
@@ -53,7 +53,7 @@ Explicitly excluded from v1.1. Documented to prevent scope creep.
 | GEN-11 | Phase 7 | Pending |
 | GEN-12 | Phase 7 | Pending |
 | CFG-04 | Phase 5 | Complete |
-| CFG-05 | Phase 5 | Pending |
+| CFG-05 | Phase 5 | Complete |
 | CFG-06 | Phase 6 | Pending |
 | CFG-07 | Phase 6 | Pending |
 | CFG-08 | Phase 6 | Pending |
