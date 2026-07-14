@@ -46,12 +46,14 @@ Exceptions: none introduced by this phase. (The `py-1.5` on `CharacterPreviewRow
 
 Inherited from the existing design system — this phase introduced exactly one new text element (the batch caveat line) and one new label pattern ("Stopping…"), both using existing type roles, no new sizes/weights.
 
+The Typography table below is capped at the project's 2 declared weights (400/600) and covers only this phase's non-Button text. The shadcn `Button` component's built-in label weight (500) is a component default this phase did not set, override, or introduce — see the callout below the table.
+
 | Role | Size | Weight | Line Height | Used by this phase for |
 |------|------|--------|-------------|-------------------------|
-| Label (button) | 14px (`text-sm`, shadcn `Button` default) | 500 (Button default) | 1.43 | "Stop" / "Stopping…" / "Generate preview" labels |
-| Caption | 12px (`text-xs`) | 400 (regular) / 600 (`font-semibold` on the "Can't create..." heading, unaffected by this phase) | 1.33 | D-06 batch caveat paragraph under the batch Stop button |
+| Caption | 12px (`text-xs`) | 400 (regular) | 1.33 | D-06 batch caveat paragraph under the batch Stop button |
+| Caption (heading, unaffected) | 12px (`text-xs`) | 600 (`font-semibold`) | 1.33 | "Can't create..." heading — pre-existing, unaffected by this phase |
 
-No new font sizes or weights were declared. Both roles reuse the 2-weight system already established (regular 400 / semibold 600, per the project's pre-existing type scale) plus the Button component's own default (500) — this phase did not add a third weight, it inherited the shadcn Button's built-in weight.
+**Inherited component default, out of scope for the 2-weight cap:** "Stop" / "Stopping…" / "Generate preview" button labels render at 14px (`text-sm`) / weight 500 / line-height 1.43 — this is the shadcn `Button` component's own built-in default, applied automatically to every button in the codebase (pre-existing since the design system was initialized, not this phase). This phase used the stock `Button` component as-is and did not declare, override, or add a third weight to the type scale; the table above lists only the weights this phase's own text (the D-06 caption) actually set.
 
 ---
 
