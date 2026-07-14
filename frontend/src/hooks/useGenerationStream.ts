@@ -1,11 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 
-import {
-  getProject,
-  type GenerationProgress,
-  type GenerationStatus,
-  type Segment,
-} from "@/api/client"
+import { type GenerationProgress, type GenerationStatus } from "@/api/client"
 
 export type GenerationStreamStatus = "idle" | "running" | "ready" | "error"
 
@@ -94,12 +89,4 @@ export function useGenerationStream(projectId: string | null): GenerationStreamS
   }, [projectId, connectionKey])
 
   return { ...state, restart }
-}
-
-/** Re-fetch the current segments (e.g. to pick up final audio_path/
- * output_path once a run reaches "ready"/"error") without reopening the SSE
- * subscription — same shape as useAnalysisStream's refreshProject. */
-export async function refreshSegments(projectId: string): Promise<Segment[]> {
-  const project = await getProject(projectId)
-  return project.segments
 }

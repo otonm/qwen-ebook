@@ -2,6 +2,22 @@
 // endpoints (backend/app/main.py). Same-origin via the Vite dev proxy
 // (vite.config.ts) — no base URL needed.
 
+// WR-04 fix: the backend's tts_client.py synthesize() allows up to 300s
+// (httpx.Timeout read=300.0) for a single real GPU synth call — poll
+// ceilings for a triggered generation/preview must stay comfortably above
+// that or a legitimately slow (not failed) call gets abandoned mid-poll,
+// leaving the UI stuck on "Generating…" forever with nothing left to
+// refresh it. 330s gives a safety margin over the backend's own timeout.
+export const GENERATION_POLL_CEILING_MS = 330_000
+
+/** Shared error-message extraction for the inline `role="alert"` error
+ * pattern used across UploadScreen/ProjectListScreen/ConfigPanel/
+ * SegmentTable/ProjectScreen (WR-06/WR-07): prefer a real Error's message,
+ * fall back to a caller-supplied default for non-Error rejections. */
+export function errorMessage(err: unknown, fallback: string): string {
+  return err instanceof Error ? err.message : fallback
+}
+
 export interface Character {
   id: string
   name: string

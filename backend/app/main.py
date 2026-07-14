@@ -290,7 +290,16 @@ async def delete_project(project_id: str) -> Response:
 
     A live batch generation for this project is cancelled first (same
     cancel path as POST /generate/cancel) so its background task can't
-    keep writing rows/files the delete just removed out from under it."""
+    keep writing rows/files the delete just removed out from under it.
+
+    Uses the same true-kill sequence as cancel_generation, not raw
+    task.cancel() (CR-01 fix): cancelling a Task awaiting run_in_threadpool
+    does not wait for the underlying GPU thread, so it would release the
+    generation lock while a real synth call is still orphaned in the
+    background — letting an unrelated generation request start concurrently
+    against the same resident model instance. Deleting this project's own
+    rows regardless of timing is fine; racing a second project's generation
+    against an orphaned call on a single-GPU/single-flight design is not."""
     with Session(engine) as session:
         project = session.get(Project, project_id)
         if project is None:
@@ -305,7 +314,8 @@ async def delete_project(project_id: str) -> Response:
 
     task = get_generation_task(project_id)
     if task is not None:
-        task.cancel()
+        request_stop(f"batch:{project_id}")
+        await run_in_threadpool(tts_client.cancel)
         with contextlib.suppress(asyncio.CancelledError):
             await task
 
@@ -1011,13 +1021,15 @@ async def cancel_segment_generation(segment_id: str) -> dict:
     with contextlib.suppress(asyncio.CancelledError):
         await task
 
-    with Session(engine) as session:
-        segment = session.get(Segment, segment_id)
-        if segment is not None and segment.generation_status != "complete":
-            segment.generation_status = "pending"
-            segment.generation_error = None
-            session.add(segment)
-            session.commit()
+    # WR-01 fix: no reset here. By the time `await task` returns,
+    # regenerate_segment's own except-Exception branch has already written
+    # the correct terminal status using this same request_stop flag —
+    # "pending" for a genuine cancel, "error" for an unrelated synth
+    # failure, or "complete" if the call happened to finish successfully
+    # despite the cancel request. A second, unconditional reset here would
+    # only ever be redundant (the cancel case) or actively wrong (it would
+    # overwrite a real, unrelated failure back to "pending", masking it as
+    # a clean stop).
 
     return {"status": "cancelled"}
 
@@ -1101,24 +1113,17 @@ async def generate_project(project_id: str) -> dict:
     if not try_claim_generation(f"batch:{project_id}"):
         return {"status": "busy"}
 
-    label = f"batch:{project_id}"
     # Create the progress queue synchronously, before the task is even
     # scheduled to run — the frontend reconnects generation-stream right
     # after this handler returns, and generation_stream's "nothing queued
     # yet" fast path would otherwise race run_batch_generation's first
     # push_generation_event and close the stream prematurely.
     ensure_generation_queue(project_id)
-    task = asyncio.create_task(run_batch_generation(project_id))
-    register_generation_task(label, task)
-    _background_tasks.add(task)
-
-    def _cleanup(completed_task: asyncio.Task, label: str = label) -> None:
-        _background_tasks.discard(completed_task)
-        if _running_generations.get(label) is completed_task:
-            _running_generations.pop(label, None)
-        release_generation()
-
-    task.add_done_callback(_cleanup)
+    # WR-03 fix: reuse the same registration/cleanup helper every other
+    # generation call site uses, instead of duplicating asyncio.create_task
+    # + register_generation_task + a private _running_generations.pop
+    # done-callback inline here.
+    _spawn_claimed_generation(run_batch_generation(project_id), f"batch:{project_id}")
 
     return {"status": "started"}
 

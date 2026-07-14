@@ -195,14 +195,16 @@ def synthesize_wav(text: str, speaker: str | None = None, instruct: str | None =
     # than an empty string (treated identically by the model, but None is
     # the more honest "no instruction" signal).
     #
-    # stopping_criteria forwards through generate_custom_voice(**kwargs) ->
-    # _merge_generate_kwargs(**kwargs) -> model.generate(..., **gen_kwargs)
-    # (ARCHITECTURE.md "Capability 1"): checked once per decode step.
+    # No stopping_criteria kwarg here — per the D-02 finding above, it is
+    # silently dropped by generate_custom_voice/generate()'s own kwargs
+    # handling before it ever reaches a real decode loop. The only place
+    # cancellation actually works is the model.model.talker.generate patch
+    # above, which injects its own _CancelStoppingCriteria via
+    # kwargs.setdefault regardless of what's passed here.
     wavs, sample_rate = model.generate_custom_voice(
         text=text,
         speaker=chosen_speaker,
         instruct=instruct.strip() if instruct and instruct.strip() else None,
-        stopping_criteria=StoppingCriteriaList([_CancelStoppingCriteria()]),
     )
 
     if _cancel_event.is_set():

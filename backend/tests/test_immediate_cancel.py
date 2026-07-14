@@ -162,6 +162,54 @@ def test_segment_cancel_true_kills_and_resets_to_pending(monkeypatch):
 
     _wait_for_idle()
 
+
+def test_segment_cancel_does_not_mask_an_unrelated_genuine_failure(monkeypatch):
+    """WR-01 regression: cancel_segment_generation must not blanket-reset
+    any non-"complete" status to "pending". Here the task fails for a
+    genuinely unrelated reason and is allowed to settle *before* any cancel
+    is requested (no request_stop() has fired for this label), so
+    regenerate_segment's own exception handler correctly writes "error".
+    A cancel call arriving afterward must leave that error untouched —
+    not silently relabel it as a clean stop just because the label was
+    touched.
+
+    Note: deliberately does NOT race the cancel against the failure (see
+    generation_worker._stop_requested's docstring / 04-03's own
+    request_stop design) — if a stop is requested for a label while
+    regenerate_segment's exception handler is concurrently deciding
+    pending-vs-error for that same label, the flag alone can't distinguish
+    "this failure was caused by the cancel" from "coincidental timing";
+    that is a separate, pre-existing ambiguity in regenerate_segment
+    itself, not the redundant-reset bug this test targets."""
+
+    def _always_fails(text: str, speaker: str, instruct: str | None = None) -> bytes:
+        raise RuntimeError("unrelated backend crash — nothing to do with cancellation")
+
+    monkeypatch.setattr("app.main.synthesize", _always_fails)
+
+    seed = _seed_project_with_segment()
+    segment_id = seed["segment_id"]
+
+    start = client.post(f"/segments/{segment_id}/generate")
+    assert start.status_code == 202
+    _wait_for_idle()  # let the unrelated failure settle before any cancel
+
+    with Session(engine) as session:
+        segment = session.get(Segment, segment_id)
+        assert segment.generation_status == "error"
+        assert segment.generation_error == "TTS synthesis failed"
+
+    cancel = client.post(f"/segments/{segment_id}/generate/cancel")
+    assert cancel.status_code == 200
+    assert cancel.json()["status"] == "not_running"
+
+    with Session(engine) as session:
+        segment = session.get(Segment, segment_id)
+        # The genuine error must survive — never overwritten to "pending"
+        # just because a cancel call was later issued against this label.
+        assert segment.generation_status == "error"
+        assert segment.generation_error == "TTS synthesis failed"
+
     # No stuck "generating" row — a fresh generate succeeds immediately.
     fresh = client.post(f"/segments/{segment_id}/generate")
     assert fresh.status_code == 202

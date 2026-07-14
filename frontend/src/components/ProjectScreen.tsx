@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 
-import { getProject, type Project, type Segment } from "@/api/client"
+import { errorMessage, getProject, type Project, type Segment } from "@/api/client"
 import { ConfigPanel } from "@/components/ConfigPanel"
 import { SegmentTable } from "@/components/SegmentTable"
+import { Button } from "@/components/ui/button"
 import { useGenerationLock } from "@/hooks/useGenerationLock"
 import { useGenerationStream } from "@/hooks/useGenerationStream"
 
@@ -17,6 +18,7 @@ interface ProjectScreenProps {
  * badges without SegmentTable needing to know about the SSE stream. */
 export function ProjectScreen({ projectId }: ProjectScreenProps) {
   const [project, setProject] = useState<Project | null>(null)
+  const [fetchError, setFetchError] = useState<string | null>(null)
   const generation = useGenerationStream(projectId)
   // Global (app-wide, not just this project) single-flight signal — only
   // one generation of any kind may be in flight at a time, so both the
@@ -25,7 +27,19 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
   const generationLocked = useGenerationLock()
 
   const refetch = useCallback(() => {
-    getProject(projectId).then(setProject).catch(() => setProject(null))
+    // WR-07 fix: a transient failure (network blip, backend restart
+    // mid-request) must not discard an already-loaded project — refetch()
+    // runs after every generate/cancel/reassign action, so nulling project
+    // here would throw the user back to the full-page "Loading…" state
+    // for no reason the next successful poll wouldn't have recovered from
+    // on its own. Keep the last-known project and surface a transient
+    // error banner instead.
+    getProject(projectId)
+      .then((p) => {
+        setProject(p)
+        setFetchError(null)
+      })
+      .catch((err: unknown) => setFetchError(errorMessage(err, "Couldn't refresh the project.")))
   }, [projectId])
 
   useEffect(() => {
@@ -56,19 +70,40 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
 
   const liveSegments = useMemo(() => {
     if (!project) return []
-    if (Object.keys(generation.segmentStatuses).length === 0) return project.segments
+    // WR-05 fix: segmentStatuses is only reset when a NEW SSE connection
+    // opens (restart(), i.e. a fresh Generate All click) — it is never
+    // cleared when a run's terminal event arrives, nor when a segment is
+    // locally patched. Trusting it once a batch is no longer "running"
+    // let a stale "complete" overlay override a segment that was since
+    // edited (patchSegment correctly flipped it back to "pending" in
+    // project.segments, but the badge kept showing the old live status).
+    // The freshly-fetched project.segments is always the source of truth
+    // once nothing is actively streaming.
+    if (generation.status !== "running") return project.segments
     return project.segments.map((segment) => {
       const liveStatus = generation.segmentStatuses[segment.id]
       return liveStatus && liveStatus !== segment.generation_status
         ? { ...segment, generation_status: liveStatus }
         : segment
     })
-  }, [project, generation.segmentStatuses])
+  }, [project, generation.status, generation.segmentStatuses])
 
   if (!project) {
     return (
-      <div className="mx-auto flex min-h-svh max-w-2xl items-center justify-center p-6">
-        <p className="text-sm text-muted-foreground">Loading project…</p>
+      <div className="mx-auto flex min-h-svh max-w-2xl flex-col items-center justify-center gap-2 p-6 text-center">
+        <p className="text-sm text-muted-foreground">
+          {fetchError ? "Couldn't load this project." : "Loading project…"}
+        </p>
+        {fetchError && (
+          <>
+            <p className="text-sm text-destructive" role="alert">
+              {fetchError}
+            </p>
+            <Button type="button" size="sm" variant="outline" onClick={refetch}>
+              Retry
+            </Button>
+          </>
+        )}
       </div>
     )
   }
@@ -76,6 +111,11 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
   return (
     <div className="mx-auto flex max-w-[1600px] flex-col gap-6 p-6">
       <h1 className="text-2xl font-semibold">{project.filename}</h1>
+      {fetchError && (
+        <p className="text-sm text-destructive" role="alert">
+          {fetchError} (showing last-loaded data)
+        </p>
+      )}
       <div className="flex flex-col gap-8 xl:flex-row">
         <div className="xl:w-[70%]">
           <SegmentTable

@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react"
 import {
   cancelBatchGeneration,
   cancelCharacterPreview,
+  errorMessage,
+  GENERATION_POLL_CEILING_MS,
   previewUrl,
   runBatchGeneration,
   triggerCharacterPreview,
@@ -48,6 +50,7 @@ function CharacterPreviewRow({
   const [isPlaying, setIsPlaying] = useState(false)
   const [isTriggeringPreview, setIsTriggeringPreview] = useState(false)
   const [isStoppingPreview, setIsStoppingPreview] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
   const hasPreview = Boolean(character.preview_audio_path)
   // A parent refresh landing the new preview_audio_path is what ends the
@@ -57,16 +60,17 @@ function CharacterPreviewRow({
 
   // Preview generation is a background task (no SSE for it) — poll
   // steadily after triggering so Play enables once it lands, without the
-  // user needing to manually refresh. 60s ceiling (not a short burst):
-  // real GPU synthesis can run well past a few seconds on a cold/idle-GPU
-  // downclock-recovery spike (tts_service/model.py's keepalive_matmul; a
-  // fresh TTS container's very first request measured ~38s in
-  // production), so a failed generation is the only thing this ceiling
-  // needs to guard against, not a normal slow one.
+  // user needing to manually refresh. WR-04 fix: ceiling raised to
+  // GENERATION_POLL_CEILING_MS (well above the backend's own 300s synth
+  // timeout) — real GPU synthesis can run well past a few seconds on a
+  // cold/idle-GPU downclock-recovery spike (tts_service/model.py's
+  // keepalive_matmul; a fresh TTS container's very first request measured
+  // ~38s in production), so only a genuinely failed/hung call should hit
+  // this ceiling, never a normal slow one.
   useEffect(() => {
     if (!isGeneratingPreview) return undefined
     const interval = setInterval(onRefresh, 1500)
-    const timeout = setTimeout(() => clearInterval(interval), 60000)
+    const timeout = setTimeout(() => clearInterval(interval), GENERATION_POLL_CEILING_MS)
     return () => {
       clearInterval(interval)
       clearTimeout(timeout)
@@ -85,22 +89,27 @@ function CharacterPreviewRow({
 
   async function handleGeneratePreview() {
     setIsTriggeringPreview(true)
+    setError(null)
     try {
       await triggerCharacterPreview(character.id)
       onRefresh()
-    } catch {
+    } catch (err) {
       setIsTriggeringPreview(false)
+      setError(errorMessage(err, "Couldn't start the preview."))
     }
   }
 
   async function handleStopPreview() {
     setIsStoppingPreview(true)
+    setError(null)
     try {
       // cancelCharacterPreview's await only resolves once the backend has
       // genuinely finished the underlying call and released the lock
       // (04-03) — that confirmed-stopped signal is what lets us clear
       // local state honestly (D-03/D-05), not an optimistic guess.
       await cancelCharacterPreview(character.id)
+    } catch (err) {
+      setError(errorMessage(err, "Couldn't stop the preview."))
     } finally {
       setIsTriggeringPreview(false)
       setIsStoppingPreview(false)
@@ -109,56 +118,63 @@ function CharacterPreviewRow({
   }
 
   return (
-    <div className="flex items-center gap-2 rounded-md bg-background px-2 py-1.5">
-      <Button
-        type="button"
-        size="icon-sm"
-        variant={isPlaying ? "default" : "outline"}
-        disabled={!hasPreview}
-        onClick={togglePlayback}
-        title={hasPreview ? undefined : "No preview generated yet"}
-        aria-label={
-          isPlaying ? `Pause preview for ${character.name}` : `Play preview for ${character.name}`
-        }
-      >
-        {isPlaying ? <Pause /> : <Play />}
-      </Button>
-      <span className="flex-1 truncate text-sm">{character.name}</span>
-      {!hasPreview && (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-2 rounded-md bg-background px-2 py-1.5">
         <Button
           type="button"
-          size="sm"
-          variant="ghost"
-          disabled={isGeneratingPreview || isStoppingPreview || generationLocked}
-          onClick={() => void handleGeneratePreview()}
+          size="icon-sm"
+          variant={isPlaying ? "default" : "outline"}
+          disabled={!hasPreview}
+          onClick={togglePlayback}
+          title={hasPreview ? undefined : "No preview generated yet"}
+          aria-label={
+            isPlaying ? `Pause preview for ${character.name}` : `Play preview for ${character.name}`
+          }
         >
-          {isGeneratingPreview ? (
-            <Loader2 className="size-3 animate-spin" />
-          ) : (
-            "Generate preview"
-          )}
+          {isPlaying ? <Pause /> : <Play />}
         </Button>
-      )}
-      {isGeneratingPreview && (
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          disabled={isStoppingPreview}
-          onClick={() => void handleStopPreview()}
-          aria-label={`Stop generating preview for ${character.name}`}
-        >
-          {isStoppingPreview ? "Stopping…" : "Stop"}
-        </Button>
-      )}
-      {hasPreview && (
-        <audio
-          ref={audioRef}
-          src={previewUrl(character.id)}
-          onPlay={() => setIsPlaying(true)}
-          onPause={() => setIsPlaying(false)}
-          onEnded={() => setIsPlaying(false)}
-        />
+        <span className="flex-1 truncate text-sm">{character.name}</span>
+        {!hasPreview && (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={isGeneratingPreview || isStoppingPreview || generationLocked}
+            onClick={() => void handleGeneratePreview()}
+          >
+            {isGeneratingPreview ? (
+              <Loader2 className="size-3 animate-spin" />
+            ) : (
+              "Generate preview"
+            )}
+          </Button>
+        )}
+        {isGeneratingPreview && (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={isStoppingPreview}
+            onClick={() => void handleStopPreview()}
+            aria-label={`Stop generating preview for ${character.name}`}
+          >
+            {isStoppingPreview ? "Stopping…" : "Stop"}
+          </Button>
+        )}
+        {hasPreview && (
+          <audio
+            ref={audioRef}
+            src={previewUrl(character.id)}
+            onPlay={() => setIsPlaying(true)}
+            onPause={() => setIsPlaying(false)}
+            onEnded={() => setIsPlaying(false)}
+          />
+        )}
+      </div>
+      {error && (
+        <p className="text-xs text-destructive" role="alert">
+          {error}
+        </p>
       )}
     </div>
   )
@@ -185,6 +201,7 @@ export function ConfigPanel({
 }: ConfigPanelProps) {
   const [isStarting, setIsStarting] = useState(false)
   const [isCancelling, setIsCancelling] = useState(false)
+  const [batchError, setBatchError] = useState<string | null>(null)
 
   const hasAnyComplete = segments.some((segment) => segment.generation_status === "complete")
   const hasAnyIncomplete = segments.some((segment) => segment.generation_status !== "complete")
@@ -217,14 +234,26 @@ export function ConfigPanel({
 
   async function handleGenerateAll() {
     setIsStarting(true)
+    setBatchError(null)
     try {
-      await runBatchGeneration(project.id)
+      const result = await runBatchGeneration(project.id)
       // generation-stream is request-scoped and self-closes after each
       // run's terminal event — a second Generate All click needs a fresh
       // SSE connection or generation.status can never report "running"
       // again, and the Stop button (gated on isBatchRunning) never
       // reappears even though the backend is genuinely generating.
       generation.restart()
+      // IN-03 fix: "busy"/"already_running" means the batch did NOT
+      // actually start (something else holds the single global slot) —
+      // tell the user why the button spun and reverted instead of leaving
+      // them to guess.
+      if (result.status === "busy") {
+        setBatchError("Another generation is already running — try again shortly.")
+      } else if (result.status === "already_running") {
+        setBatchError("This project's generation is already running.")
+      }
+    } catch (err) {
+      setBatchError(errorMessage(err, "Couldn't start generation."))
     } finally {
       setIsStarting(false)
     }
@@ -232,9 +261,12 @@ export function ConfigPanel({
 
   async function handleStop() {
     setIsCancelling(true)
+    setBatchError(null)
     try {
       await cancelBatchGeneration(project.id)
       onRefresh()
+    } catch (err) {
+      setBatchError(errorMessage(err, "Couldn't stop generation."))
     } finally {
       setIsCancelling(false)
     }
@@ -327,6 +359,11 @@ export function ConfigPanel({
               regenerate them, then try again.
             </p>
           </div>
+        )}
+        {batchError && (
+          <p className="text-xs text-destructive" role="alert">
+            {batchError}
+          </p>
         )}
       </section>
     </div>

@@ -18,6 +18,8 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import {
   bulkReassignSegments,
   cancelSegmentGeneration,
+  errorMessage,
+  GENERATION_POLL_CEILING_MS,
   generateSegment,
   patchSegment,
   segmentAudioUrl,
@@ -106,6 +108,7 @@ function GeneratePlayButton({
   const [isPlaying, setIsPlaying] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
   const autoplayRef = useRef(false)
   // Tracks whether we've actually seen this row hit "generating" (from
@@ -135,11 +138,13 @@ function GeneratePlayButton({
 
   // Poll for the 202+background-task result while we're the one waiting on
   // a generation we triggered — mirrors CharacterPreviewRow's 1500ms
-  // interval + 60s ceiling so a failed synth can't poll forever.
+  // interval + poll ceiling (WR-04 fix: GENERATION_POLL_CEILING_MS, well
+  // above the backend's own 300s synth timeout) so a legitimately slow
+  // call isn't abandoned mid-poll — only a genuinely failed/hung one is.
   useEffect(() => {
     if (!isGenerating) return undefined
     const interval = setInterval(onRefresh, 1500)
-    const timeout = setTimeout(() => clearInterval(interval), 60000)
+    const timeout = setTimeout(() => clearInterval(interval), GENERATION_POLL_CEILING_MS)
     return () => {
       clearInterval(interval)
       clearTimeout(timeout)
@@ -173,17 +178,20 @@ function GeneratePlayButton({
       return
     }
     setIsGenerating(true)
+    setError(null)
     autoplayRef.current = true
     try {
       await generateSegment(segment.id)
       onRefresh()
-    } catch {
+    } catch (err) {
       setIsGenerating(false)
+      setError(errorMessage(err, "Couldn't start generation."))
     }
   }
 
   async function handleStop() {
     setIsStopping(true)
+    setError(null)
     try {
       // cancelSegmentGeneration's await only resolves once the backend has
       // genuinely finished the underlying call and released the lock
@@ -191,6 +199,8 @@ function GeneratePlayButton({
       // optimistic guess, so clearing local state here is honest per
       // D-03/D-05.
       await cancelSegmentGeneration(segment.id)
+    } catch (err) {
+      setError(errorMessage(err, "Couldn't stop generation."))
     } finally {
       setIsGenerating(false)
       setIsStopping(false)
@@ -205,49 +215,56 @@ function GeneratePlayButton({
     : `Generate audio for segment ${segment.order + 1}`
 
   return (
-    <>
-      <Button
-        type="button"
-        size="icon-sm"
-        variant={isPlaying ? "default" : "outline"}
-        disabled={isDisabled}
-        onClick={() => void handleClick()}
-        aria-label={label}
-      >
-        {isRowGenerating ? (
-          <Loader2 className="animate-spin" />
-        ) : hasAudio ? (
-          isPlaying ? (
-            <Pause />
-          ) : (
-            <Play />
-          )
-        ) : (
-          <Play />
-        )}
-      </Button>
-      {isRowGenerating && (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-1">
         <Button
           type="button"
-          size="sm"
-          variant="outline"
-          disabled={isStopping}
-          onClick={() => void handleStop()}
-          aria-label={`Stop generating segment ${segment.order + 1}`}
+          size="icon-sm"
+          variant={isPlaying ? "default" : "outline"}
+          disabled={isDisabled}
+          onClick={() => void handleClick()}
+          aria-label={label}
         >
-          {isStopping ? "Stopping…" : "Stop"}
+          {isRowGenerating ? (
+            <Loader2 className="animate-spin" />
+          ) : hasAudio ? (
+            isPlaying ? (
+              <Pause />
+            ) : (
+              <Play />
+            )
+          ) : (
+            <Play />
+          )}
         </Button>
+        {isRowGenerating && (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={isStopping}
+            onClick={() => void handleStop()}
+            aria-label={`Stop generating segment ${segment.order + 1}`}
+          >
+            {isStopping ? "Stopping…" : "Stop"}
+          </Button>
+        )}
+        {hasAudio && (
+          <audio
+            ref={audioRef}
+            src={segmentAudioUrl(segment.id)}
+            onPlay={() => setIsPlaying(true)}
+            onPause={() => setIsPlaying(false)}
+            onEnded={() => setIsPlaying(false)}
+          />
+        )}
+      </div>
+      {error && (
+        <p className="text-xs text-destructive" role="alert">
+          {error}
+        </p>
       )}
-      {hasAudio && (
-        <audio
-          ref={audioRef}
-          src={segmentAudioUrl(segment.id)}
-          onPlay={() => setIsPlaying(true)}
-          onPause={() => setIsPlaying(false)}
-          onEnded={() => setIsPlaying(false)}
-        />
-      )}
-    </>
+    </div>
   )
 }
 
@@ -260,24 +277,36 @@ function NarratorCell({
   characters: Character[]
   onSegmentChange: (segment: Segment) => void
 }) {
+  const [error, setError] = useState<string | null>(null)
+
   function handleChange(value: string) {
     if (value === segment.character_id) return
-    void patchSegment(segment.id, { character_id: value }).then(onSegmentChange)
+    setError(null)
+    patchSegment(segment.id, { character_id: value })
+      .then(onSegmentChange)
+      .catch((err: unknown) => setError(errorMessage(err, "Couldn't reassign narrator.")))
   }
 
   return (
-    <Select value={segment.character_id} onValueChange={handleChange}>
-      <SelectTrigger size="sm" aria-label={`Narrator for segment ${segment.order + 1}`}>
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        {characters.map((character) => (
-          <SelectItem key={character.id} value={character.id}>
-            {character.name}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+    <div className="flex flex-col gap-1">
+      <Select value={segment.character_id} onValueChange={handleChange}>
+        <SelectTrigger size="sm" aria-label={`Narrator for segment ${segment.order + 1}`}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {characters.map((character) => (
+            <SelectItem key={character.id} value={character.id}>
+              {character.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {error && (
+        <p className="text-xs text-destructive" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
   )
 }
 
@@ -299,6 +328,7 @@ function EditableTextCell({
 }) {
   const initialValue = segment[field]
   const [value, setValue] = useState(initialValue)
+  const [error, setError] = useState<string | null>(null)
   const segmentIdRef = useRef(segment.id)
 
   useEffect(() => {
@@ -311,17 +341,27 @@ function EditableTextCell({
 
   function handleBlur() {
     if (value === initialValue) return
-    void patchSegment(segment.id, { [field]: value }).then(onSegmentChange)
+    setError(null)
+    patchSegment(segment.id, { [field]: value })
+      .then(onSegmentChange)
+      .catch((err: unknown) => setError(errorMessage(err, "Couldn't save edit.")))
   }
 
   return (
-    <Textarea
-      aria-label={`${label} for segment ${segment.order + 1}`}
-      value={value}
-      onChange={(e) => setValue(e.target.value)}
-      onBlur={handleBlur}
-      className="min-h-16 bg-background text-sm"
-    />
+    <div className="flex flex-col gap-1">
+      <Textarea
+        aria-label={`${label} for segment ${segment.order + 1}`}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={handleBlur}
+        className="min-h-16 bg-background text-sm"
+      />
+      {error && (
+        <p className="text-xs text-destructive" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
   )
 }
 
@@ -340,47 +380,58 @@ function BulkReassignToolbar({
 }) {
   const [targetId, setTargetId] = useState<string>("")
   const [isReassigning, setIsReassigning] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   async function handleConfirm() {
     if (!targetId) return
     setIsReassigning(true)
+    setError(null)
     try {
       await bulkReassignSegments(selectedIds, targetId)
       onReassigned(targetId)
+    } catch (err) {
+      setError(errorMessage(err, "Couldn't reassign segments."))
     } finally {
       setIsReassigning(false)
     }
   }
 
   return (
-    <div className="mb-2 flex h-12 items-center gap-3 rounded-lg bg-secondary px-3">
-      <span className="text-xs font-semibold text-muted-foreground">
-        {selectedIds.length} selected
-      </span>
-      <Select value={targetId} onValueChange={setTargetId}>
-        <SelectTrigger size="sm" aria-label="Reassign narrator to">
-          <SelectValue placeholder="Reassign narrator to…" />
-        </SelectTrigger>
-        <SelectContent>
-          {characters.map((character) => (
-            <SelectItem key={character.id} value={character.id}>
-              {character.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <Button
-        type="button"
-        size="sm"
-        disabled={!targetId || isReassigning}
-        onClick={() => void handleConfirm()}
-      >
-        {isReassigning ? (
-          <Loader2 className="animate-spin" />
-        ) : (
-          `Reassign ${selectedIds.length} segment${selectedIds.length === 1 ? "" : "s"}`
-        )}
-      </Button>
+    <div className="mb-2 flex flex-col gap-1">
+      <div className="flex h-12 items-center gap-3 rounded-lg bg-secondary px-3">
+        <span className="text-xs font-semibold text-muted-foreground">
+          {selectedIds.length} selected
+        </span>
+        <Select value={targetId} onValueChange={setTargetId}>
+          <SelectTrigger size="sm" aria-label="Reassign narrator to">
+            <SelectValue placeholder="Reassign narrator to…" />
+          </SelectTrigger>
+          <SelectContent>
+            {characters.map((character) => (
+              <SelectItem key={character.id} value={character.id}>
+                {character.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button
+          type="button"
+          size="sm"
+          disabled={!targetId || isReassigning}
+          onClick={() => void handleConfirm()}
+        >
+          {isReassigning ? (
+            <Loader2 className="animate-spin" />
+          ) : (
+            `Reassign ${selectedIds.length} segment${selectedIds.length === 1 ? "" : "s"}`
+          )}
+        </Button>
+      </div>
+      {error && (
+        <p className="text-xs text-destructive" role="alert">
+          {error}
+        </p>
+      )}
     </div>
   )
 }
@@ -453,13 +504,11 @@ export function SegmentTable({
         id: "controls",
         header: "",
         cell: ({ row }) => (
-          <div className="flex items-center gap-1">
-            <GeneratePlayButton
-              segment={row.original}
-              onRefresh={onRefresh}
-              generationLocked={generationLocked}
-            />
-          </div>
+          <GeneratePlayButton
+            segment={row.original}
+            onRefresh={onRefresh}
+            generationLocked={generationLocked}
+          />
         ),
       }),
     ],
