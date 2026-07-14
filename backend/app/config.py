@@ -61,6 +61,7 @@ class Settings:
     OPENROUTER_MODEL: str
     DATABASE_URL: str
     ANALYSIS_TOKEN_LIMIT: int
+    LOG_LEVEL: str
 
 
 def load_settings() -> Settings:
@@ -88,7 +89,27 @@ def load_settings() -> Settings:
         OPENROUTER_API_KEY=os.environ.get("OPENROUTER_API_KEY", ""),
         OPENROUTER_MODEL=os.environ.get("OPENROUTER_MODEL", "x-ai/grok-4.3"),
         DATABASE_URL=os.environ.get("DATABASE_URL", _DEFAULT_DATABASE_URL),
-        ANALYSIS_TOKEN_LIMIT=_env_int("ANALYSIS_TOKEN_LIMIT", 500_000),
+        # content-loss fix round 2 (debug/llm-analysis-content-loss.md): D-05/
+        # D-06 originally sized this off the model's ~1M-token CONTEXT window
+        # (500K in, 500K of "headroom" for output). Real-key testing showed
+        # the actual completion-token ceiling is unrelated to context size and
+        # far smaller — a 110K-char single call hit finish_reason="length" at
+        # ~68K completion tokens, and even well below that (30K chars) the
+        # model sometimes self-truncates (finish_reason="stop" but only ~60%
+        # coverage) on this long, repetitive verbatim-transcription task.
+        # 6_000 tokens -> a 24_000-char per-call budget, comfortably under
+        # both observed failure points, so most real documents now actually
+        # get chunked instead of being sent as one call the model can't
+        # reliably complete. Paired with the retry-then-fail-loud coverage
+        # gate in analysis_worker.py.
+        ANALYSIS_TOKEN_LIMIT=_env_int("ANALYSIS_TOKEN_LIMIT", 6_000),
+        # Nothing configured logging.basicConfig() anywhere, so every
+        # module's `logger = logging.getLogger(__name__)` call had no
+        # handler to emit through and the root logger's default level
+        # (WARNING) silently dropped INFO messages besides — CLAUDE.md's
+        # "extensive debugging messages" convention was write-only. Set via
+        # main.py at process startup, LOG_LEVEL="DEBUG" for maximum detail.
+        LOG_LEVEL=os.environ.get("LOG_LEVEL", "INFO").upper(),
     )
 
 

@@ -13,6 +13,8 @@ import logging
 import uuid
 from collections.abc import AsyncIterator
 
+import httpx
+from pydantic import ValidationError
 from sqlmodel import Session
 
 from app.analysis_client import analyze
@@ -32,6 +34,88 @@ _progress_queues: dict[str, asyncio.Queue] = {}
 # D-07: last-20-resolved-segments continuity window fed to each subsequent
 # chunk's analyze() call.
 _RECENT_SEGMENTS_LIMIT = 20
+
+# content-loss fix (debug/llm-analysis-content-loss.md): formatting is
+# allowed to be normalized, so segment text is never expected to be
+# byte-identical in length to its source — but a ratio this low is a signal
+# of real content loss, not cosmetic whitespace/blank-line collapsing.
+_CONTENT_COVERAGE_WARN_RATIO = 0.85
+
+# content-loss fix round 2 (debug/llm-analysis-content-loss.md): real-key
+# testing showed the SAME input can swing from 59% to 98% coverage between
+# calls (finish_reason="stop" but the model self-truncated the transcription
+# task early) — a bounded retry turns that measured non-determinism into a
+# real mitigation instead of just a log line. 1 initial attempt + 2 retries.
+_MAX_ANALYZE_ATTEMPTS = 3
+
+
+def _coverage_ratio(source_text: str, result: CastAnalysisResult) -> float:
+    """Fraction of `source_text`'s length reproduced across `result`'s
+    segments — the content-loss tripwire's core measurement, shared by the
+    retry gate below."""
+    source_len = len(source_text)
+    if source_len == 0:
+        return 1.0
+    return sum(len(s.text) for s in result.segments) / source_len
+
+
+async def _analyze_with_retry(
+    label: str,
+    text: str,
+    running_cast: list[CharacterSuggestion] | None = None,
+    recent_segments: list[SegmentSuggestion] | None = None,
+) -> CastAnalysisResult:
+    """Calls `analyze()`, retrying up to `_MAX_ANALYZE_ATTEMPTS` times when
+    the result covers too little of `text` — promotes the old log-only
+    coverage tripwire to an enforced gate: a persistently incomplete result
+    now fails loud (raises, caller's except sets project.status="error" with
+    an informative error_detail) instead of silently persisting as if
+    nothing were missing, which is the exact silent failure mode this
+    debug session's second round diagnosed.
+
+    content-loss fix round 3: also retries on `analyze()` itself raising —
+    real-key testing on a large/dense chunk showed the provider
+    occasionally return malformed structured-output JSON near the
+    completion-token ceiling (`CastAnalysisResult.model_validate_json()`
+    raises `ValidationError`) instead of just a low-coverage-but-valid
+    result. That's the same non-determinism the coverage retry already
+    mitigates, so it gets the same bounded-retry treatment rather than
+    failing the whole chunk on one bad sample."""
+    ratio = 0.0
+    last_error: Exception | None = None
+    for attempt in range(1, _MAX_ANALYZE_ATTEMPTS + 1):
+        try:
+            result = await analyze(
+                text, running_cast=running_cast, recent_segments=recent_segments
+            )
+        except (ValidationError, httpx.HTTPError) as exc:
+            last_error = exc
+            logger.warning(
+                f"{label}: attempt {attempt}/{_MAX_ANALYZE_ATTEMPTS} raised "
+                f"{type(exc).__name__} — "
+                + ("retrying" if attempt < _MAX_ANALYZE_ATTEMPTS else "giving up")
+            )
+            continue
+        ratio = _coverage_ratio(text, result)
+        if ratio >= _CONTENT_COVERAGE_WARN_RATIO:
+            return result
+        last_error = None
+        logger.warning(
+            f"{label}: attempt {attempt}/{_MAX_ANALYZE_ATTEMPTS} covered only "
+            f"{ratio:.0%} of source text — "
+            + ("retrying" if attempt < _MAX_ANALYZE_ATTEMPTS else "giving up")
+        )
+    if last_error is not None:
+        raise RuntimeError(
+            f"{label}: analysis repeatedly failed ({_MAX_ANALYZE_ATTEMPTS} attempts, "
+            f"last error: {last_error}) — provider may be returning malformed output "
+            "near the completion-token ceiling; try a smaller ANALYSIS_TOKEN_LIMIT"
+        ) from last_error
+    raise RuntimeError(
+        f"{label}: analysis repeatedly returned incomplete content ({ratio:.0%} "
+        f"coverage after {_MAX_ANALYZE_ATTEMPTS} attempts) — try a smaller "
+        "ANALYSIS_TOKEN_LIMIT/CHUNK_TARGET_LEN"
+    )
 
 
 def _get_queue(project_id: str) -> asyncio.Queue:
@@ -182,7 +266,8 @@ async def _run_chunked_analysis(project_id: str, text: str, queue: asyncio.Queue
 
     for index, group_text in enumerate(groups, start=1):
         await queue.put(("progress", {"stage": "chunk", "n": index, "total": total}))
-        result = await analyze(
+        result = await _analyze_with_retry(
+            f"project {project_id} chunk {index}/{total}",
             group_text,
             running_cast=running_cast or None,
             recent_segments=recent_segments or None,
@@ -217,7 +302,7 @@ async def run_analysis(project_id: str) -> None:
             await _run_chunked_analysis(project_id, text, queue)
         else:
             await queue.put(("progress", {"stage": "analyzing"}))
-            result = await analyze(text)
+            result = await _analyze_with_retry(f"project {project_id}", text)
             with Session(engine) as session:
                 _persist_result(session, project_id, result, {}, order_start=0)
                 session.commit()

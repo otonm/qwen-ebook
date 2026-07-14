@@ -38,13 +38,25 @@ def _build_preset_roster_block() -> str:
 
 # CAST-01/CAST-03: instructs Grok to (a) detect narrator + speaking cast
 # with inferred traits, cast each from the fixed presets, and adapt the
-# picked preset's description to the character, (b) split the text into
-# ordered voice-tagged segments with dialogue-only delivery instructions,
-# and (c) reconcile confident cross-chunk character matches (D-08) when
-# continuity context is supplied. Wording is intentionally treated as
-# iterative, not a fixed spec — see 02-03-PLAN.md "Prompt-quality
+# picked preset's description to the character, (b) split the text into a
+# COMPLETE ordered script of voice-tagged segments with delivery
+# instructions, and (c) reconcile confident cross-chunk character matches
+# (D-08) when continuity context is supplied. Wording is intentionally
+# treated as iterative, not a fixed spec — see 02-03-PLAN.md "Prompt-quality
 # validation" for the required real-key manual UAT pass.
-CAST_ANALYSIS_SYSTEM_PROMPT = f"""You are preparing narrative text for multi-voice audio narration.
+#
+# content-loss fix (debug/llm-analysis-content-loss.md): real-key testing
+# showed the model was silently dropping dialogue tags/action beats (e.g.
+# "she said, her voice calm but firm") whenever it used that narration to
+# derive a dialogue segment's voice_instructions — it treated "extract the
+# delivery cue" as license to discard the sentence instead of ALSO keeping
+# it as its own Narrator segment. Step 2 below is now explicit that 100% of
+# the input must survive into segments, and that deriving a delivery cue
+# from narration text does not exempt that text from also appearing.
+CAST_ANALYSIS_SYSTEM_PROMPT = f"""You are converting narrative text into a complete script for \
+multi-voice audio narration. The single most important rule: every word of the input text must \
+survive into `segments` — you are re-typesetting the text into a script, not summarizing, \
+adapting, or condensing it.
 
 1. Identify the cast: the narrator plus every distinct speaking character
    in the text. For EACH character (including the narrator), pick the
@@ -67,23 +79,50 @@ CAST_ANALYSIS_SYSTEM_PROMPT = f"""You are preparing narrative text for multi-voi
    and adapt the matching preset instead. Mark the narrator with
    `is_narrator=true`.
 
-2. Split the text into an ordered list of `segments`. Each segment is a
-   contiguous span of narration, or a single character's uninterrupted
-   dialogue — never mix two speakers into one segment. Tag each segment
-   with the speaking `character_name` (must match a name in your cast
-   list).
+2. Split the text into an ordered list of `segments` covering the ENTIRE
+   input, read sequentially front to back with nothing skipped. Each
+   segment is a contiguous span of narration, or a single character's
+   uninterrupted dialogue — never mix two speakers into one segment. Tag
+   each segment with the speaking `character_name` (must match a name in
+   your cast list).
 
-   `voice_instructions` contract:
-   - Narration segments: `voice_instructions` MUST be an empty string "".
-     The character's own base voice (from step 1) already carries the
-     narration's steering.
-   - Dialogue segments (a single character's spoken line): a short
-     delivery direction for a voice actor covering only tone, pace,
-     volume, and emotional inflection for that specific line (e.g.
-     "whispers", "in a happy tone, getting more excited", "scared, voice
-     trembling"). Do NOT restate what is happening in the scene, describe
-     physical actions or gestures, or summarize plot/story content — it is
-     spoken-delivery guidance only, never a scene description.
+   COMPLETENESS IS MANDATORY: every sentence, clause, dialogue tag (e.g.
+   "she said", "he shouted"), and action beat (e.g. "leaning against the
+   doorway") in the source must appear, verbatim, in exactly one segment.
+   Formatting/whitespace may be normalized (collapse repeated blank lines,
+   trim stray spaces), but words and content may never be removed,
+   paraphrased, or summarized. Concatenating every segment's `text` in
+   order must reproduce the full input.
+
+   This completeness rule applies ONLY to the text under "=== TEXT TO
+   CONVERT ===" (or the whole user message when that marker is absent). If
+   a "Continuity context" block appears first, it is reference material
+   already persisted from earlier in the book — never re-emit it, or any
+   part of it, as a new segment. Producing a segment for content that only
+   appears in the continuity block, and not in the text to convert, is
+   exactly as wrong as dropping content.
+
+   CRITICAL — dialogue tags and action beats do NOT disappear into
+   voice_instructions: when the narration around a quote (e.g. "she said,
+   her voice calm but firm") tells you how the line is delivered, that
+   sentence still belongs in the output as its own Narrator segment,
+   positioned immediately before or after the quote exactly as in the
+   source. Using it to inform that character's `voice_instructions` never
+   excuses dropping it from the text.
+
+   `voice_instructions` contract: a short spoken-delivery direction for a
+   voice actor — tone, pace, volume, emotional inflection, and how it
+   shifts through the line (e.g. "whispers", "in a happy tone, getting
+   more excited", "scared, voice trembling", "flat and weary", "growing
+   angrier with each word"). Never restate what is happening in the scene,
+   describe physical actions/gestures, or summarize plot/story content —
+   delivery guidance only, never a scene description.
+   - Dialogue segments: infer this from context — who's speaking, to
+     whom, and the surrounding narration's emotional cues.
+   - Narration segments: leave as an empty string "" by default; only set
+     it when that narration's own tone is distinctly charged (e.g.
+     "tense", "melancholy", "urgent") — most narration segments should
+     still be "".
 
 3. If you are given a `running_cast` (already-detected characters from
    earlier in this same book) and `recent_segments` (the most recently
@@ -94,6 +133,14 @@ CAST_ANALYSIS_SYSTEM_PROMPT = f"""You are preparing narrative text for multi-voi
    duplicate character entry. Only add a new character when you are not
    confident it is a repeat of one already listed.
 """
+
+# content-loss fix: low temperature keeps segmentation close to a
+# deterministic "re-typeset the input" task rather than letting sampling
+# variance invite paraphrasing/summarization of narration. Module-level
+# constant (not a Settings/env knob) since there is no comparable
+# per-deployment LLM-call parameter in config.py to follow, and nothing so
+# far needs it tunable per environment.
+_ANALYSIS_TEMPERATURE = 0.2
 
 _MOCK_NARRATOR = CharacterSuggestion(
     name="Narrator",
@@ -117,9 +164,13 @@ def _mock_paragraphs(text: str) -> list[str]:
 
 def _mock_analyze(text: str) -> CastAnalysisResult:
     # Canned deterministic output: a narrator + one named character, with
-    # 2-3 segments derived from the input's paragraphs (mock backend, no
-    # real cast detection happens here).
-    paragraphs = _mock_paragraphs(text)[:3]
+    # segments derived from every paragraph (mock backend, no real cast
+    # detection happens here). Must cover 100% of the input like the real
+    # backend now does (content-loss fix round 2) — analysis_worker's
+    # coverage-retry gate would otherwise fail a mock-mode project with more
+    # than a few paragraphs, since mock's output is deterministic and a
+    # retry would never improve it.
+    paragraphs = _mock_paragraphs(text)
     segments = [
         SegmentSuggestion(
             order=index,
@@ -140,18 +191,33 @@ def _build_continuity_block(
 ) -> str:
     """Render D-07's continuity context (running cast + last-20 resolved
     segments) as plain text, prepended to the book text inside the SAME
-    user() message — never the system message."""
+    user() message — never the system message.
+
+    content-loss fix round 3 (debug/llm-analysis-content-loss.md):
+    real-key multi-chunk testing showed the model re-emitting this
+    continuity block's own content as brand-new segments on the following
+    chunk call — round 1's "100% of the input must survive into segments"
+    instruction didn't distinguish "the new text to convert" from "already-
+    resolved context shown for reference" once both landed in the same
+    user message, so each chunk started duplicating the last chunk's tail.
+    The explicit non-reproduction instruction + "=== TEXT TO CONVERT ==="
+    marker (matched by the system prompt's completeness-rule scoping) fixes
+    that ambiguity."""
     if not running_cast and not recent_segments:
         return ""
 
-    lines = ["Continuity context from earlier in this same book:"]
+    lines = [
+        "Continuity context from earlier in this same book — reference "
+        "only. Do NOT create segments for anything in this block; it is "
+        "already persisted and must not appear again in your output."
+    ]
     if running_cast:
         lines.append("Already-detected cast (reuse these names for the same character):")
         lines.extend(f"- {c.name}: {c.description}" for c in running_cast)
     if recent_segments:
         lines.append("Most recently resolved segments (narrative continuity):")
         lines.extend(f"[{s.character_name}] {s.text}" for s in recent_segments)
-    lines.append("---\n")
+    lines.append("=== TEXT TO CONVERT ===\n")
     return "\n".join(lines)
 
 
@@ -163,6 +229,7 @@ async def _real_analyze(
     continuity = _build_continuity_block(running_cast, recent_segments)
     payload = {
         "model": settings.OPENROUTER_MODEL,
+        "temperature": _ANALYSIS_TEMPERATURE,
         "messages": [
             {"role": "system", "content": CAST_ANALYSIS_SYSTEM_PROMPT},
             {"role": "user", "content": f"{continuity}{text}"},

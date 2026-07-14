@@ -33,6 +33,11 @@ Volume=qwen-ebook-data:/data
 Environment=DATABASE_URL=sqlite:////data/projects.db
 Environment=UPLOAD_DIR=/data/uploads
 Environment=OUTPUT_DIR=/data/output
+# Verbose internal tracing (chunk progress, coverage-retry warnings, cache
+# hits, generation/cancel lifecycle) — httpx/httpcore are force-kept at
+# WARNING in app.main regardless of this, so DEBUG can't leak the
+# OPENROUTER_API_KEY via request-header logging.
+Environment=LOG_LEVEL=DEBUG
 
 [Service]
 # Self-heal on crash rather than staying down (03-UAT.md test 1).

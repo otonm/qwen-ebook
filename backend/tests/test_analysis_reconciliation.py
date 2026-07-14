@@ -319,7 +319,7 @@ def test_run_analysis_multi_chunk_emits_per_chunk_sse_progress(monkeypatch):
             ],
             segments=[
                 SegmentSuggestion(
-                    order=0, character_name="Narrator", text=text[:20], voice_instructions="calm"
+                    order=0, character_name="Narrator", text=text, voice_instructions="calm"
                 )
             ],
         )

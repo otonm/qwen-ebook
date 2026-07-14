@@ -46,10 +46,13 @@ class SegmentSuggestion(BaseModel):
     text: str
     voice_instructions: str = Field(
         description=(
-            "Empty string for narration segments. For a single dialogue line: "
-            "a short spoken-delivery direction only (tone, pace, volume, "
+            "A short spoken-delivery direction only (tone, pace, volume, "
             "emotional inflection), e.g. 'whispers' or 'in a happy tone, "
-            "getting more excited'. Never a scene or action description."
+            "getting more excited'. Never a scene or action description, and "
+            "never a substitute for including that scene/action text in a "
+            "segment's own `text`. Dialogue lines: infer from context. "
+            "Narration: empty string \"\" by default, unless the narration's "
+            "own tone is distinctly charged (e.g. 'tense', 'melancholy')."
         )
     )
 

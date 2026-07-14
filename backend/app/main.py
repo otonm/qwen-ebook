@@ -67,6 +67,25 @@ from app.voices import best_guess_preset, list_presets, merge_instructions, pres
 
 logger = logging.getLogger(__name__)
 
+# Every module does `logging.getLogger(__name__)`, but nothing ever
+# configured a handler for the root logger those propagate to — INFO/DEBUG
+# messages were silently dropped (WARNING is the default root level with
+# no handler configured), so the app's own logging was invisible in
+# `podman logs`/uvicorn's stdout despite the extensive logger.info() calls
+# throughout the codebase. This must run before any app logger emits, which
+# import-time module execution above hasn't done yet — LOG_LEVEL=DEBUG in
+# the environment (or backend/.env) surfaces the full internal flow.
+logging.basicConfig(
+    level=settings.LOG_LEVEL,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+# httpx/httpcore's own DEBUG logging can dump raw request headers, which
+# would include the `Authorization: Bearer <OPENROUTER_API_KEY>` header
+# used for every real LLM call — keep them quiet regardless of LOG_LEVEL so
+# turning on app-level DEBUG logging never leaks the key into the logs.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 _READ_CHUNK_SIZE = 1024 * 1024  # 1 MiB
 
 # Fire-and-forget background tasks must be held onto until they finish, or
