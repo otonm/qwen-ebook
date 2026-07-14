@@ -36,6 +36,7 @@ Given a long text, produce a natural-sounding, multi-character narrated audio fi
 - [x] Projects (source text, character cast, segment table, generated audio) are saved and can be reopened later — single user, no accounts — Validated in Phase 3 (PERS-01/02): auto-save on every edit, a Project List landing screen, resumable batch generation, and a stuck-analyzing-screen recovery path for a stale/deleted project id
 - [x] App is deployed via Podman on a VM with an AMD GPU (RX 9070 XT, 16GB VRAM), served over the user's Tailscale network (no public exposure, no auth needed beyond Tailscale) — Validated in Phase 3 (DEPL-02): Podman Quadlet systemd units, `tailscale serve` fronting a loopback-only backend, a persistent `/data` volume, and restart self-heal (`--exit-policy=continue`) all confirmed live on the production RX 9070 XT VM
 - [x] User can upload an EPUB (.epub) source file, with chapter/reading-order text extracted and markup/footnotes stripped — Validated in Phase 2 (ING-02, plan 02-02): `epub_parser.py` (ebooklib + BeautifulSoup/lxml), spine-order extraction, footnote stripping, fail-fast on unrecoverable chapters, wired into `POST /projects`
+- [x] User can pick between two Qwen TTS model sizes (1.7B / 0.6B) per project, with only one resident in VRAM at a time and a warning that 0.6B drops free-text voice-instruction steering — Validated in Phase 5 (CFG-04/CFG-05): `ensure_loaded(model_id)` swap engine (real-hardware-verified: 12 alternating swap cycles, zero VRAM fragmentation drift, 4.7-6.0s latency), `Project.tts_model` threaded through `compute_cache_key` so a swap can never serve stale cross-model audio, and a persistent D-03 warning note replacing the old hardcoded model display. A code review caught and fixed a real correctness gap before sign-off (CR-01, commit `d675fa4`): the generation path didn't reconcile tts_service's single resident model with the *current* project before synthesizing, so a swap in one project could silently produce audio under the wrong model for a different project.
 
 ### Active
 
@@ -100,4 +101,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-13 after starting v1.1 milestone*
+*Last updated: 2026-07-14 after Phase 5 (On-Demand Model Swap) completion*
