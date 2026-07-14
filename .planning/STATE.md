@@ -5,8 +5,8 @@ milestone_name: Generation UX & Config Rework
 current_phase: 5
 current_phase_name: On-Demand Model Swap
 status: executing
-stopped_at: Phase 5 context gathered
-last_updated: "2026-07-14T10:02:36.514Z"
+stopped_at: Phase 5 UI-SPEC approved
+last_updated: "2026-07-14T11:48:38.304Z"
 last_activity: 2026-07-14
 last_activity_desc: Phase 04 complete, transitioned to Phase 5
 progress:
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-13)
 
 Phase: 5 — On-Demand Model Swap
 Plan: Not started
-Status: Executing Phase 04
+Status: Ready to execute
 Last activity: 2026-07-14 — Phase 04 complete, transitioned to Phase 5
 
 Progress: [░░░░░░░░░░] 0%
@@ -104,7 +104,7 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-14T10:02:36.509Z
-Stopped at: Phase 5 context gathered
-Resume file: .planning/phases/05-on-demand-model-swap/05-CONTEXT.md
+Last session: 2026-07-14T10:29:47.907Z
+Stopped at: Phase 5 UI-SPEC approved
+Resume file: .planning/phases/05-on-demand-model-swap/05-UI-SPEC.md
 Next step: /gsd-plan-phase 4
