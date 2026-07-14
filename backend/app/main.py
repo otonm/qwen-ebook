@@ -834,6 +834,7 @@ async def regenerate_segment(segment_id: str, version: int) -> None:
         if segment is None:
             return
         character = session.get(Character, segment.character_id)
+        project = session.get(Project, segment.project_id)
         speaker = _resolve_segment_speaker(segment, character)
         # PRESET-REWORK merge point: the final instruct steering is the
         # character's adapted base voice PLUS this line's delivery — not
@@ -846,7 +847,12 @@ async def regenerate_segment(segment_id: str, version: int) -> None:
             character.voice_instructions if character else "", segment.voice_instructions
         )
         instruct = merged_instructions or None
-        cache_key = compute_cache_key(speaker, merged_instructions, segment.text)
+        # Phase 5 (CFG-04/Pattern 2): the live per-project model id is part
+        # of the cache key so a model swap can never serve the other
+        # model's stale cached audio for identical (speaker, instructions,
+        # text).
+        model_id = project.tts_model if project else "1.7b"
+        cache_key = compute_cache_key(speaker, merged_instructions, segment.text, model_id)
         text = segment.text
         existing_cache_key = segment.cache_key
         existing_audio_path = segment.audio_path

@@ -21,6 +21,13 @@ class Project(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     # Set once the full-project audio join (plan 03-03) completes.
     output_path: str | None = None
+    # Phase 5 (CFG-04): the per-project source of truth for which Qwen TTS
+    # checkpoint this project wants ("1.7b" | "0.6b") — compute_cache_key
+    # reads this live on every generate-check. Never treat model choice as
+    # ambient global config (RESEARCH.md Anti-Pattern) — it must live here,
+    # per-project, so a swap in one project can't silently affect another's
+    # cache correctness. Defaults to today's baseline model.
+    tts_model: str = "1.7b"
 
 
 class Character(SQLModel, table=True):
