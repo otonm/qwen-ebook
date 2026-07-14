@@ -50,6 +50,7 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "project": [
         ("created_at", "TEXT"),
         ("output_path", "TEXT"),
+        ("tts_model", "TEXT DEFAULT '1.7b'"),
     ],
 }
 
