@@ -129,6 +129,28 @@ def test_generate_segment_passes_voice_instructions_as_instruct(monkeypatch):
     assert captured["instruct"] == "sad and aggressive"
 
 
+def test_generate_segment_reconciles_resident_model_before_synth(monkeypatch):
+    """Code review CR-01: tts_service holds exactly one resident model
+    process-wide, but Project.tts_model is per-project — regenerate_segment
+    must reconcile the resident model with its own project's tts_model
+    before every synth call, not just read it for the cache key. Otherwise a
+    different project's earlier swap can leave the WRONG model resident and
+    silently produce (and mis-cache-key) audio for the wrong checkpoint."""
+    calls: list[str] = []
+
+    monkeypatch.setattr("app.main.tts_client.load_model", lambda model_id: calls.append(model_id))
+    monkeypatch.setattr("app.main.synthesize", lambda text, speaker, instruct=None: b"AUDIO-BYTES")
+
+    seed = _seed_segment()
+    response = client.post(f"/segments/{seed['segment_id']}/generate")
+    assert response.status_code == 202
+    _wait_for_terminal([seed["segment_id"]])
+
+    # Project defaults to tts_model="1.7b" — the reconciliation call must
+    # have fired with that id before synthesis (not skipped entirely).
+    assert calls == ["1.7b"]
+
+
 # --- PATCH /segments/{id} — cache hit/bust (GEN-02/GEN-03) ---------------
 
 

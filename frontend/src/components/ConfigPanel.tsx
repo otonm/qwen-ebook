@@ -81,7 +81,16 @@ function CharacterPreviewRow({
   useEffect(() => {
     if (!isGeneratingPreview) return undefined
     const interval = setInterval(onRefresh, 1500)
-    const timeout = setTimeout(() => clearInterval(interval), GENERATION_POLL_CEILING_MS)
+    // Code review WR-02: hitting the ceiling used to only stop the poll,
+    // leaving isTriggeringPreview stuck true forever (spinner with no
+    // recovery path) whenever the backend silently swallowed a preview
+    // failure. Reset the trigger state and surface an error so the user
+    // can retry instead of reloading the page.
+    const timeout = setTimeout(() => {
+      clearInterval(interval)
+      setIsTriggeringPreview(false)
+      setError("Preview generation is taking too long — try again.")
+    }, GENERATION_POLL_CEILING_MS)
     return () => {
       clearInterval(interval)
       clearTimeout(timeout)

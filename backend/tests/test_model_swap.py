@@ -127,6 +127,42 @@ def test_swap_invalidates_segments_and_previews(tmp_path: Path, monkeypatch):
     assert client.get("/generation-status").json() == {"active": False}
 
 
+def test_noop_swap_to_already_resident_model_does_not_invalidate(tmp_path: Path, monkeypatch):
+    """Code review CR-02: a request for the model already resident on the
+    project must be a true no-op — no load_model call, no lock claim, and
+    critically no destruction of previously-generated segment audio or
+    character previews (a duplicate submit or direct API call must not
+    force a costly full re-generation for nothing)."""
+    seeded = _seed_project_with_files(tmp_path, tts_model="1.7b")
+    calls = []
+    monkeypatch.setattr(app_main.tts_client, "load_model", lambda model_id: calls.append(model_id))
+
+    response = client.post(f"/projects/{seeded['project_id']}/model", json={"model_id": "1.7b"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["tts_model"] == "1.7b"
+    assert calls == []  # never even attempted a reload
+
+    segment = body["segments"][0]
+    assert segment["generation_status"] == "complete"  # untouched
+    assert segment["audio_path"] == str(seeded["segment_audio"])
+
+    character = body["characters"][0]
+    assert character["preview_audio_path"] == str(seeded["preview_audio"])
+
+    with Session(engine) as session:
+        db_segment = session.exec(
+            select(Segment).where(Segment.project_id == seeded["project_id"])
+        ).first()
+        assert db_segment.cache_key == "stale-key"  # never cleared
+        assert db_segment.generation_version == 3  # never bumped
+
+    assert seeded["segment_audio"].exists()
+    assert seeded["preview_audio"].exists()
+    assert client.get("/generation-status").json() == {"active": False}
+
+
 def test_failed_load_leaves_project_untouched_and_releases_lock(tmp_path: Path, monkeypatch):
     seeded = _seed_project_with_files(tmp_path, tts_model="1.7b")
 

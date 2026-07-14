@@ -368,13 +368,27 @@ async def set_project_model(project_id: str, body: SetModelRequest) -> dict:
     D-02: a failed load releases the lock and raises 502 with the project
     row, cached audio, and previews all left UNTOUCHED — tts_service only
     `del`s the old model AFTER the new one loads successfully, so the
-    prior model is still resident and usable."""
+    prior model is still resident and usable.
+
+    A request for the model already resident on the project is a no-op —
+    returned before the lock is even claimed — so a duplicate submit or a
+    direct API call can't destroy previously-generated audio for nothing
+    (code review CR-02)."""
     if body.model_id not in MODEL_CHOICES:
         raise HTTPException(status_code=422, detail=f"unknown model_id {body.model_id!r}")
 
     with Session(engine) as session:
-        if session.get(Project, project_id) is None:
+        project = session.get(Project, project_id)
+        if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
+        if project.tts_model == body.model_id:
+            characters = list(
+                session.exec(select(Character).where(Character.project_id == project_id)).all()
+            )
+            segments = list(
+                session.exec(select(Segment).where(Segment.project_id == project_id)).all()
+            )
+            return _serialize_project(project, characters, segments)
 
     label = f"model-load:{body.model_id}"
     if not try_claim_generation(label):
@@ -382,69 +396,75 @@ async def set_project_model(project_id: str, body: SetModelRequest) -> dict:
             status_code=409, detail="Another generation is already in progress"
         )
 
+    # Code review WR-01: every other lock-holder in this file releases via
+    # a background task's add_done_callback, which asyncio guarantees to
+    # run. This handler runs synchronously in the request, so the lock is
+    # released via try/finally instead — an unexpected exception anywhere
+    # below (DB write conflict, unlink OSError, serialization error) must
+    # not permanently wedge the process-wide generation lock.
     try:
-        await run_in_threadpool(tts_client.load_model, body.model_id)
-    except Exception as exc:
-        # D-02: leave the project row, cached audio, and previews
-        # untouched — the swap never got far enough to change anything.
+        try:
+            await run_in_threadpool(tts_client.load_model, body.model_id)
+        except Exception as exc:
+            # D-02: leave the project row, cached audio, and previews
+            # untouched — the swap never got far enough to change anything.
+            raise HTTPException(status_code=502, detail=f"model load failed: {exc}") from exc
+
+        old_paths: list[str] = []
+        with Session(engine) as session:
+            project = session.get(Project, project_id)
+            if project is None:
+                raise HTTPException(status_code=404, detail="Project not found")
+
+            project.tts_model = body.model_id
+            session.add(project)
+
+            # D-05/D-06: reuse GEN-03's per-row invalidation mechanism
+            # (patch_segment's pattern), looped project-wide instead of
+            # per-row. Also clears cache_key (Pattern 3) — a stale stored
+            # cache_key must not survive the swap, not just the audio file.
+            for segment in session.exec(
+                select(Segment).where(Segment.project_id == project_id)
+            ).all():
+                segment.generation_version += 1
+                segment.generation_status = "pending"
+                segment.generation_error = None
+                if segment.audio_path:
+                    old_paths.append(segment.audio_path)
+                segment.audio_path = None
+                segment.cache_key = None
+                session.add(segment)
+
+            # RESEARCH Pitfall 4: character previews have no cache key and
+            # aren't gated by GEN-03's mechanism at all — clear them here too
+            # so a stale preview from the previously-resident model can't be
+            # played back indistinguishably from a fresh one.
+            for character in session.exec(
+                select(Character).where(Character.project_id == project_id)
+            ).all():
+                if character.preview_audio_path:
+                    old_paths.append(character.preview_audio_path)
+                character.preview_audio_path = None
+                session.add(character)
+
+            session.commit()
+
+            characters = list(
+                session.exec(select(Character).where(Character.project_id == project_id)).all()
+            )
+            segments = list(
+                session.exec(select(Segment).where(Segment.project_id == project_id)).all()
+            )
+            result = _serialize_project(project, characters, segments)
+
+        # Mirrors patch_segment/patch_character's ordering: invalidate inside
+        # the session, unlink the old files only after commit.
+        for path in old_paths:
+            Path(path).unlink(missing_ok=True)
+
+        return result
+    finally:
         release_generation()
-        raise HTTPException(status_code=502, detail=f"model load failed: {exc}") from exc
-
-    old_paths: list[str] = []
-    with Session(engine) as session:
-        project = session.get(Project, project_id)
-        if project is None:
-            release_generation()
-            raise HTTPException(status_code=404, detail="Project not found")
-
-        project.tts_model = body.model_id
-        session.add(project)
-
-        # D-05/D-06: reuse GEN-03's per-row invalidation mechanism
-        # (patch_segment's pattern), looped project-wide instead of
-        # per-row. Also clears cache_key (Pattern 3) — a stale stored
-        # cache_key must not survive the swap, not just the audio file.
-        for segment in session.exec(
-            select(Segment).where(Segment.project_id == project_id)
-        ).all():
-            segment.generation_version += 1
-            segment.generation_status = "pending"
-            segment.generation_error = None
-            if segment.audio_path:
-                old_paths.append(segment.audio_path)
-            segment.audio_path = None
-            segment.cache_key = None
-            session.add(segment)
-
-        # RESEARCH Pitfall 4: character previews have no cache key and
-        # aren't gated by GEN-03's mechanism at all — clear them here too
-        # so a stale preview from the previously-resident model can't be
-        # played back indistinguishably from a fresh one.
-        for character in session.exec(
-            select(Character).where(Character.project_id == project_id)
-        ).all():
-            if character.preview_audio_path:
-                old_paths.append(character.preview_audio_path)
-            character.preview_audio_path = None
-            session.add(character)
-
-        session.commit()
-
-        characters = list(
-            session.exec(select(Character).where(Character.project_id == project_id)).all()
-        )
-        segments = list(
-            session.exec(select(Segment).where(Segment.project_id == project_id)).all()
-        )
-        result = _serialize_project(project, characters, segments)
-
-    # Mirrors patch_segment/patch_character's ordering: invalidate inside
-    # the session, unlink the old files only after commit.
-    for path in old_paths:
-        Path(path).unlink(missing_ok=True)
-
-    release_generation()
-    return result
 
 
 async def _require_project_exists(project_id: str) -> None:
@@ -577,10 +597,16 @@ async def _generate_preview(character_id: str, version: int) -> None:
         # raw Qwen speaker name — resolve it to the real speaker synthesize()
         # needs.
         speaker = preset_speaker(preset_id)
+        project = session.get(Project, character.project_id)
+        model_id = project.tts_model if project else "1.7b"
 
     intro_line = f"Hi, my name is {name} and I am a {description}."
 
     try:
+        # Code review CR-01: reconcile the resident model with this
+        # character's project before synthesizing — see regenerate_segment's
+        # matching comment. No-op when already resident.
+        await run_in_threadpool(tts_client.load_model, model_id)
         wav_bytes = await run_in_threadpool(synthesize, intro_line, speaker, instruct)
     except Exception:
         # Broad catch is deliberate: this runs as a fire-and-forget background
@@ -983,6 +1009,12 @@ async def regenerate_segment(segment_id: str, version: int) -> None:
         return
 
     try:
+        # Code review CR-01: tts_service holds exactly one resident model
+        # process-wide, but `model_id` above is per-project — without this,
+        # a different project's swap left resident could silently produce
+        # (and mis-cache-key) audio for the WRONG model. No-op when
+        # `model_id` is already resident (tts_service/model.py ensure_loaded).
+        await run_in_threadpool(tts_client.load_model, model_id)
         wav_bytes = await run_in_threadpool(synthesize, text, speaker, instruct)
     except Exception:
         # Broad catch is deliberate: this runs as a fire-and-forget
