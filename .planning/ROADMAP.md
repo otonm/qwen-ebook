@@ -22,7 +22,7 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
 
 **Milestone Goal:** Replace ambiguous status indicators with a single clear color-coded generate/stop/play control everywhere audio is generated, and give the user real control over model, output format, filename, and downloading the finished file.
 
-- [ ] **Phase 4: Immediate Cancellation** - Stopping a segment, character preview, or batch generation interrupts the in-flight GPU call immediately, not just the queue
+- [x] **Phase 4: Immediate Cancellation** - Stopping a segment, character preview, or batch generation interrupts the in-flight GPU call immediately, not just the queue (completed 2026-07-14)
 - [ ] **Phase 5: On-Demand Model Swap** - User can switch between the 1.7B and 0.6B Qwen TTS models per project, with VRAM-safe load/unload and a steering-limitation warning
 - [ ] **Phase 6: Config Panel — Output Format, Filename & Download** - User can pick FLAC/MP3/Opus, set a custom filename, and download the finished joined file
 - [ ] **Phase 7: Unified Generate/Stop/Play Button & Trimmed Segment Table** - One consistent yellow/red/green control replaces all four hand-rolled generate/play implementations and the separate status badge column
@@ -53,7 +53,7 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
   3. User can click Stop on a running Generate All batch and the currently in-flight segment's generation halts immediately, not just skips remaining queued segments
   4. Immediately after any stop completes, the user can start a new generation without errors or a stuck "still generating" state — proving the interruption is real, not cosmetic
 
-**Plans**: 3/4 plans executed
+**Plans**: 4/4 plans complete
 **Wave 1**
 
 - [x] 04-01-PLAN.md — D-02 spike: StoppingCriteria cancellation machinery + real-hardware abort-timing validation (checkpoint-gated)
@@ -68,7 +68,7 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 04-04-PLAN.md — Frontend: bare-bones Stop + distinct "stopping…" state on segment/character/batch, 202+poll wiring, D-06 caveat copy fix
+- [x] 04-04-PLAN.md — Frontend: bare-bones Stop + distinct "stopping…" state on segment/character/batch, 202+poll wiring, D-06 caveat copy fix
 
 ### Phase 5: On-Demand Model Swap
 
@@ -123,7 +123,7 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
 | 1. Upload-to-Audio Spike (TTS/ROCm De-risk) | v1.0 | 3/3 | Complete | 2026-07-09 |
 | 2. LLM Cast Detection & Review Wizard | v1.0 | 5/5 | Complete | 2026-07-10 |
 | 3. Editable Table, Full Generation Pipeline, Persistence & Deployment | v1.0 | 9/9 | Complete | 2026-07-12 |
-| 4. Immediate Cancellation | v1.1 | 3/4 | In Progress|  |
+| 4. Immediate Cancellation | v1.1 | 4/4 | Complete   | 2026-07-14 |
 | 5. On-Demand Model Swap | v1.1 | 0/TBD | Not started | - |
 | 6. Config Panel — Output Format, Filename & Download | v1.1 | 0/TBD | Not started | - |
 | 7. Unified Generate/Stop/Play Button & Trimmed Segment Table | v1.1 | 0/TBD | Not started | - |
