@@ -185,10 +185,16 @@ function GeneratePlayButton({
   async function handleStop() {
     setIsStopping(true)
     try {
+      // cancelSegmentGeneration's await only resolves once the backend has
+      // genuinely finished the underlying call and released the lock
+      // (04-03) — that's the confirmed-stopped signal itself, not an
+      // optimistic guess, so clearing local state here is honest per
+      // D-03/D-05.
       await cancelSegmentGeneration(segment.id)
-      onRefresh()
-    } catch {
+    } finally {
+      setIsGenerating(false)
       setIsStopping(false)
+      onRefresh()
     }
   }
 
