@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Generation UX & Config Rework
-current_phase: 04
-current_phase_name: Immediate Cancellation
+current_phase: 5
+current_phase_name: On-Demand Model Swap
 status: executing
 stopped_at: Phase 04 UI-SPEC approved
-last_updated: "2026-07-14T07:01:59.739Z"
-last_activity: 2026-07-13
-last_activity_desc: Phase 04 execution started
+last_updated: "2026-07-14T08:32:33.550Z"
+last_activity: 2026-07-14
+last_activity_desc: Phase 04 complete, transitioned to Phase 5
 progress:
   total_phases: 7
   completed_phases: 1
@@ -28,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-07-13)
 
 ## Current Position
 
-Phase: 04 (Immediate Cancellation) — EXECUTING
-Plan: 1 of 4
+Phase: 5 — On-Demand Model Swap
+Plan: Not started
 Status: Executing Phase 04
-Last activity: 2026-07-13 — Phase 04 execution started
+Last activity: 2026-07-14 — Phase 04 complete, transitioned to Phase 5
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -39,7 +39,7 @@ Progress: [░░░░░░░░░░] 0%
 
 **Velocity:**
 
-- Total plans completed: 12
+- Total plans completed: 16
 - Average duration: - min
 - Total execution time: 0 hours
 
@@ -49,6 +49,7 @@ Progress: [░░░░░░░░░░] 0%
 |-------|-------|-------|----------|
 | 01 | 3 | - | - |
 | 03 | 9 | - | - |
+| 04 | 4 | - | - |
 
 **Recent Trend:**
 
