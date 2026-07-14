@@ -82,13 +82,13 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
   3. When the 0.6B model is selected, the UI warns the user that free-text voice-instruction steering isn't supported by that checkpoint
   4. Segments generated after a model swap reflect the newly selected model — no stale cached audio from the previously loaded model is served
 
-**Plans**: 3 plans
+**Plans**: 2/3 plans executed
 **UI hint**: yes
 
 **Wave 1** *(parallel — disjoint files)*
 
-- [ ] 05-01-PLAN.md — tts_service engine: singleton → ensure_loaded(model_id) swap + POST /model/{id}/load + real-hardware VRAM swap-cycle test
-- [ ] 05-02-PLAN.md — backend orchestration: Project.tts_model column, model_id in cache key, tts_client.load_model, POST /projects/{id}/model handler with lock + segment/preview invalidation (D-02/D-05/D-06)
+- [x] 05-01-PLAN.md — tts_service engine: singleton → ensure_loaded(model_id) swap + POST /model/{id}/load + real-hardware VRAM swap-cycle test
+- [x] 05-02-PLAN.md — backend orchestration: Project.tts_model column, model_id in cache key, tts_client.load_model, POST /projects/{id}/model handler with lock + segment/preview invalidation (D-02/D-05/D-06)
 
 **Wave 2** *(blocked on Wave 1)*
 
@@ -133,6 +133,6 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
 | 2. LLM Cast Detection & Review Wizard | v1.0 | 5/5 | Complete | 2026-07-10 |
 | 3. Editable Table, Full Generation Pipeline, Persistence & Deployment | v1.0 | 9/9 | Complete | 2026-07-12 |
 | 4. Immediate Cancellation | v1.1 | 4/4 | Complete    | 2026-07-14 |
-| 5. On-Demand Model Swap | v1.1 | 0/TBD | Not started | - |
+| 5. On-Demand Model Swap | v1.1 | 2/3 | In Progress|  |
 | 6. Config Panel — Output Format, Filename & Download | v1.1 | 0/TBD | Not started | - |
 | 7. Unified Generate/Stop/Play Button & Trimmed Segment Table | v1.1 | 0/TBD | Not started | - |

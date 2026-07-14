@@ -2,17 +2,17 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Generation UX & Config Rework
-current_phase: 5
-current_phase_name: On-Demand Model Swap
+current_phase: 05
+current_phase_name: on-demand-model-swap
 status: executing
 stopped_at: Phase 5 UI-SPEC approved
-last_updated: "2026-07-14T11:48:38.304Z"
+last_updated: "2026-07-14T11:50:22.680Z"
 last_activity: 2026-07-14
-last_activity_desc: Phase 04 complete, transitioned to Phase 5
+last_activity_desc: Phase 05 execution started
 progress:
   total_phases: 7
   completed_phases: 1
-  total_plans: 4
+  total_plans: 7
   completed_plans: 4
   percent: 14
 ---
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-13)
 
 **Core value:** Given a long text, produce a natural-sounding, multi-character narrated audio file with minimal manual editing — the LLM does the heavy lifting of casting and segmenting, the user just fine-tunes.
-**Current focus:** Phase 04 — Immediate Cancellation
+**Current focus:** Phase 05 — on-demand-model-swap
 
 ## Current Position
 
-Phase: 5 — On-Demand Model Swap
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-07-14 — Phase 04 complete, transitioned to Phase 5
+Phase: 05 (on-demand-model-swap) — EXECUTING
+Plan: 1 of 3
+Status: Executing Phase 05
+Last activity: 2026-07-14 — Phase 05 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
