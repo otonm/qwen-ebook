@@ -219,6 +219,12 @@ export function ConfigPanel({
     setIsStarting(true)
     try {
       await runBatchGeneration(project.id)
+      // generation-stream is request-scoped and self-closes after each
+      // run's terminal event — a second Generate All click needs a fresh
+      // SSE connection or generation.status can never report "running"
+      // again, and the Stop button (gated on isBatchRunning) never
+      // reappears even though the backend is genuinely generating.
+      generation.restart()
     } finally {
       setIsStarting(false)
     }

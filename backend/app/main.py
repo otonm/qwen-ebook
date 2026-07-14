@@ -46,6 +46,7 @@ from app.epub_parser import EpubParseError, extract_text
 from app.generation_worker import (
     _running_generations,
     consume_stop_requested,
+    ensure_generation_queue,
     generation_progress_events,
     get_generation_task,
     get_generation_task_by_label,
@@ -1101,6 +1102,12 @@ async def generate_project(project_id: str) -> dict:
         return {"status": "busy"}
 
     label = f"batch:{project_id}"
+    # Create the progress queue synchronously, before the task is even
+    # scheduled to run — the frontend reconnects generation-stream right
+    # after this handler returns, and generation_stream's "nothing queued
+    # yet" fast path would otherwise race run_batch_generation's first
+    # push_generation_event and close the stream prematurely.
+    ensure_generation_queue(project_id)
     task = asyncio.create_task(run_batch_generation(project_id))
     register_generation_task(label, task)
     _background_tasks.add(task)

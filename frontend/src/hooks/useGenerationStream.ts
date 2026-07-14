@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 
 import {
   getProject,
@@ -19,9 +19,17 @@ export interface GenerationStreamState {
    * "progress" event seen so far this run. */
   segmentStatuses: Record<string, GenerationStatus>
   errorDetail: string | null
+  /** Reopen the SSE connection. The backend's generation-stream endpoint is
+   * request-scoped — one connection drains one run's events and closes
+   * itself on "done"/"error" (or immediately, if nothing was queued at
+   * connect time). A second "Generate All" click needs a fresh connection
+   * or generation.status can never leave its last terminal value again,
+   * even though the backend is genuinely running a new batch. Call this
+   * right after the trigger POST resolves. */
+  restart: () => void
 }
 
-function initialState(): GenerationStreamState {
+function initialState(): Omit<GenerationStreamState, "restart"> {
   return { status: "idle", progress: null, overall: null, segmentStatuses: {}, errorDetail: null }
 }
 
@@ -30,8 +38,13 @@ function initialState(): GenerationStreamState {
  * schema: {segment_id, n, total, status} instead of analysis's
  * {stage, n, total}). */
 export function useGenerationStream(projectId: string | null): GenerationStreamState {
-  const [state, setState] = useState<GenerationStreamState>(initialState)
+  const [state, setState] = useState(initialState)
   const sourceRef = useRef<EventSource | null>(null)
+  const [connectionKey, setConnectionKey] = useState(0)
+
+  const restart = useCallback(() => {
+    setConnectionKey((key) => key + 1)
+  }, [])
 
   useEffect(() => {
     if (!projectId) return undefined
@@ -78,9 +91,9 @@ export function useGenerationStream(projectId: string | null): GenerationStreamS
       source.close()
       sourceRef.current = null
     }
-  }, [projectId])
+  }, [projectId, connectionKey])
 
-  return state
+  return { ...state, restart }
 }
 
 /** Re-fetch the current segments (e.g. to pick up final audio_path/
