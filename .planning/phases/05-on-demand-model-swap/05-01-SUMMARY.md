@@ -153,3 +153,7 @@ None - no external service configuration required.
 ---
 *Phase: 05-on-demand-model-swap*
 *Completed: 2026-07-14*
+
+## Self-Check: PASSED
+
+All created/modified files confirmed present; all 3 commits (`c8e65c5`, `798d06e`, `8659e18`) confirmed in git log.
