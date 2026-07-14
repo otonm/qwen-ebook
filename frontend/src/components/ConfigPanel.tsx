@@ -1,4 +1,4 @@
-import { Loader2, Pause, Play } from "lucide-react"
+import { Loader2, Pause, Play, TriangleAlert } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 
 import {
@@ -8,6 +8,7 @@ import {
   GENERATION_POLL_CEILING_MS,
   previewUrl,
   runBatchGeneration,
+  setProjectModel,
   triggerCharacterPreview,
   type Character,
   type Project,
@@ -15,11 +16,21 @@ import {
 } from "@/api/client"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import type { GenerationStreamState } from "@/hooks/useGenerationStream"
 
-// CFG-01: only one TTS model is in scope for v1 (D-17) — a fixed display
-// value, not a dropdown (RESEARCH.md "Claude's Discretion").
-const TTS_MODEL_DISPLAY_NAME = "Qwen3-TTS-12Hz-1.7B-CustomVoice"
+// CFG-04: verbatim dropdown option labels (UI-SPEC Copywriting Contract) —
+// also used to build the D-02 human-readable failure message.
+const MODEL_LABELS: Record<string, string> = {
+  "1.7b": "Higher quality (1.7B)",
+  "0.6b": "Faster (0.6B)",
+}
 
 function ConfigField({ label, value }: { label: string; value: string }) {
   return (
@@ -202,6 +213,8 @@ export function ConfigPanel({
   const [isStarting, setIsStarting] = useState(false)
   const [isCancelling, setIsCancelling] = useState(false)
   const [batchError, setBatchError] = useState<string | null>(null)
+  const [isSwapping, setIsSwapping] = useState(false)
+  const [swapError, setSwapError] = useState<string | null>(null)
 
   const hasAnyComplete = segments.some((segment) => segment.generation_status === "complete")
   const hasAnyIncomplete = segments.some((segment) => segment.generation_status !== "complete")
@@ -259,6 +272,29 @@ export function ConfigPanel({
     }
   }
 
+  // D-01: fires the explicit load immediately (not deferred to next
+  // Generate). D-02: on failure, `project.tts_model` is never touched
+  // optimistically — the Select's `value` is server state, so it reverts
+  // to whichever model is still actually resident purely by re-rendering
+  // off the unchanged `project` prop once `onRefresh` (or just this
+  // catch) leaves it alone.
+  async function handleModelChange(nextModelId: string) {
+    setIsSwapping(true)
+    setSwapError(null)
+    try {
+      await setProjectModel(project.id, nextModelId)
+      onRefresh()
+    } catch (err) {
+      const attemptedLabel = MODEL_LABELS[nextModelId] ?? nextModelId
+      const residentLabel = MODEL_LABELS[project.tts_model] ?? project.tts_model
+      setSwapError(
+        errorMessage(err, `Couldn't switch to ${attemptedLabel}. Still using ${residentLabel}.`)
+      )
+    } finally {
+      setIsSwapping(false)
+    }
+  }
+
   async function handleStop() {
     setIsCancelling(true)
     setBatchError(null)
@@ -277,7 +313,40 @@ export function ConfigPanel({
       <section className="flex flex-col gap-2">
         <h2 className="text-lg font-semibold">Config</h2>
         <ConfigField label="Input File" value={project.filename} />
-        <ConfigField label="Model" value={TTS_MODEL_DISPLAY_NAME} />
+        <div className="flex flex-col gap-1">
+          <span className="text-xs font-semibold text-muted-foreground">Model</span>
+          <Select
+            value={project.tts_model}
+            onValueChange={(value) => void handleModelChange(value)}
+            disabled={isSwapping}
+          >
+            <SelectTrigger size="sm" aria-label="TTS model" className="w-full">
+              {isSwapping ? (
+                <span className="flex items-center gap-1.5">
+                  <Loader2 className="size-4 animate-spin" /> Switching model…
+                </span>
+              ) : (
+                <SelectValue />
+              )}
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="1.7b">Higher quality (1.7B)</SelectItem>
+              <SelectItem value="0.6b">Faster (0.6B)</SelectItem>
+            </SelectContent>
+          </Select>
+          {project.tts_model === "0.6b" && (
+            <p className="flex items-center gap-1 text-xs text-muted-foreground">
+              <TriangleAlert className="size-3 shrink-0" />
+              Faster (0.6B) doesn&apos;t support custom voice instructions — segments use each
+              character&apos;s base preset voice only.
+            </p>
+          )}
+          {swapError && (
+            <p className="text-xs text-destructive" role="alert">
+              {swapError}
+            </p>
+          )}
+        </div>
         <ConfigField label="Output Format" value={project.output_format.toUpperCase()} />
         <ConfigField
           label="Output File"

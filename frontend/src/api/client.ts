@@ -51,6 +51,11 @@ export interface Project {
   // output_format is a fixed server setting, not a per-project choice.
   output_path: string | null
   output_format: string
+  // CFG-04: per-project source of truth for which TTS checkpoint is
+  // resident ("1.7b" | "0.6b") — server state, so a failed swap (D-02)
+  // reverts here automatically on refetch rather than needing local
+  // optimistic-state rollback.
+  tts_model: string
   characters: Character[]
   segments: Segment[]
 }
@@ -262,6 +267,22 @@ export async function runBatchGeneration(projectId: string): Promise<{ status: s
  * or {"status": "not_running"} if nothing was in flight for this project. */
 export async function cancelBatchGeneration(projectId: string): Promise<{ status: string }> {
   const response = await fetch(`/projects/${projectId}/generate/cancel`, { method: "POST" })
+  return parseJsonOrThrow(response)
+}
+
+/** CFG-04/D-01: explicit-load model swap trigger — POSTs the chosen
+ * model_id, fires the swap immediately (blocking for the request's
+ * duration, tens of seconds), and returns the updated Project (with
+ * every segment/character preview invalidated per D-05/D-06 on success).
+ * A failed swap raises — the caller's `project.tts_model` (server state)
+ * stays on whichever model is still actually resident (D-02), never left
+ * optimistically on the failed target. */
+export async function setProjectModel(id: string, model_id: string): Promise<Project> {
+  const response = await fetch(`/projects/${id}/model`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model_id }),
+  })
   return parseJsonOrThrow(response)
 }
 
