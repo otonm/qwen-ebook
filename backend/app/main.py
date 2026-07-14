@@ -233,6 +233,9 @@ def _serialize_project(
         # config panel, neither previously exposed over the API.
         "output_path": project.output_path,
         "output_format": settings.OUTPUT_FORMAT,
+        # Phase 5 (CFG-04): drives the Config Panel's model dropdown and
+        # the 0.6B disabled-Voice-Instructions-cell state (D-04).
+        "tts_model": project.tts_model,
         "characters": [_serialize_character(character) for character in characters],
         "segments": [
             _serialize_segment(
@@ -336,6 +339,112 @@ async def delete_project(project_id: str) -> Response:
         session.commit()
 
     return Response(status_code=204)
+
+
+# Phase 5 (CFG-04): this process's own copy of the allowlist — the
+# tts_service copy lives in a different container/process, so validating
+# here too is defense in depth across the internal HTTP boundary (T-05-01).
+# Only 2 hardcoded ids: milestone explicitly scopes to exactly 2 sizes, no
+# generic model registry needed (RESEARCH.md Anti-Pattern).
+MODEL_CHOICES = {"1.7b", "0.6b"}
+
+
+class SetModelRequest(BaseModel):
+    model_id: str
+
+
+@app.post("/projects/{project_id}/model")
+async def set_project_model(project_id: str, body: SetModelRequest) -> dict:
+    """CFG-04: swap the project's resident TTS model. D-01's explicit-load
+    trigger — claims the single-flight lock (mirrors every other
+    generation-triggering route: try_claim_generation/release_generation),
+    drives the tts_service swap via tts_client.load_model, and on success
+    invalidates every segment (GEN-03's mechanism, reused project-wide per
+    D-05/D-06) AND every character preview (RESEARCH Pitfall 4 / Open
+    Question 1 — resolved toward inclusion: a swap should be "obvious, not
+    silent" project-wide, matching D-05's own stated rationale, not just
+    for segments).
+
+    D-02: a failed load releases the lock and raises 502 with the project
+    row, cached audio, and previews all left UNTOUCHED — tts_service only
+    `del`s the old model AFTER the new one loads successfully, so the
+    prior model is still resident and usable."""
+    if body.model_id not in MODEL_CHOICES:
+        raise HTTPException(status_code=422, detail=f"unknown model_id {body.model_id!r}")
+
+    with Session(engine) as session:
+        if session.get(Project, project_id) is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+    label = f"model-load:{body.model_id}"
+    if not try_claim_generation(label):
+        raise HTTPException(
+            status_code=409, detail="Another generation is already in progress"
+        )
+
+    try:
+        await run_in_threadpool(tts_client.load_model, body.model_id)
+    except Exception as exc:
+        # D-02: leave the project row, cached audio, and previews
+        # untouched — the swap never got far enough to change anything.
+        release_generation()
+        raise HTTPException(status_code=502, detail=f"model load failed: {exc}") from exc
+
+    old_paths: list[str] = []
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        if project is None:
+            release_generation()
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        project.tts_model = body.model_id
+        session.add(project)
+
+        # D-05/D-06: reuse GEN-03's per-row invalidation mechanism
+        # (patch_segment's pattern), looped project-wide instead of
+        # per-row. Also clears cache_key (Pattern 3) — a stale stored
+        # cache_key must not survive the swap, not just the audio file.
+        for segment in session.exec(
+            select(Segment).where(Segment.project_id == project_id)
+        ).all():
+            segment.generation_version += 1
+            segment.generation_status = "pending"
+            segment.generation_error = None
+            if segment.audio_path:
+                old_paths.append(segment.audio_path)
+            segment.audio_path = None
+            segment.cache_key = None
+            session.add(segment)
+
+        # RESEARCH Pitfall 4: character previews have no cache key and
+        # aren't gated by GEN-03's mechanism at all — clear them here too
+        # so a stale preview from the previously-resident model can't be
+        # played back indistinguishably from a fresh one.
+        for character in session.exec(
+            select(Character).where(Character.project_id == project_id)
+        ).all():
+            if character.preview_audio_path:
+                old_paths.append(character.preview_audio_path)
+            character.preview_audio_path = None
+            session.add(character)
+
+        session.commit()
+
+        characters = list(
+            session.exec(select(Character).where(Character.project_id == project_id)).all()
+        )
+        segments = list(
+            session.exec(select(Segment).where(Segment.project_id == project_id)).all()
+        )
+        result = _serialize_project(project, characters, segments)
+
+    # Mirrors patch_segment/patch_character's ordering: invalidate inside
+    # the session, unlink the old files only after commit.
+    for path in old_paths:
+        Path(path).unlink(missing_ok=True)
+
+    release_generation()
+    return result
 
 
 async def _require_project_exists(project_id: str) -> None:
@@ -834,6 +943,7 @@ async def regenerate_segment(segment_id: str, version: int) -> None:
         if segment is None:
             return
         character = session.get(Character, segment.character_id)
+        project = session.get(Project, segment.project_id)
         speaker = _resolve_segment_speaker(segment, character)
         # PRESET-REWORK merge point: the final instruct steering is the
         # character's adapted base voice PLUS this line's delivery — not
@@ -846,7 +956,12 @@ async def regenerate_segment(segment_id: str, version: int) -> None:
             character.voice_instructions if character else "", segment.voice_instructions
         )
         instruct = merged_instructions or None
-        cache_key = compute_cache_key(speaker, merged_instructions, segment.text)
+        # Phase 5 (CFG-04/Pattern 2): the live per-project model id is part
+        # of the cache key so a model swap can never serve the other
+        # model's stale cached audio for identical (speaker, instructions,
+        # text).
+        model_id = project.tts_model if project else "1.7b"
+        cache_key = compute_cache_key(speaker, merged_instructions, segment.text, model_id)
         text = segment.text
         existing_cache_key = segment.cache_key
         existing_audio_path = segment.audio_path

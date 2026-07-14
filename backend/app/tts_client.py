@@ -87,6 +87,32 @@ def cancel() -> None:
     raise ValueError(f"Unknown TTS_BACKEND: {settings.TTS_BACKEND!r}")
 
 
+def load_model(model_id: str) -> None:
+    """Request tts_service swap its resident model to `model_id` (Phase 5,
+    CFG-04, D-01's explicit-load trigger).
+
+    Unlike cancel(), this is NOT best-effort: a swap failure (OOM, download
+    error, checkpoint missing) must propagate so main.py's handler can
+    apply D-02 (revert the dropdown to whichever model is still actually
+    resident, leave the project row untouched). Uses the same long-read
+    timeout as synthesize() since a real swap takes tens of seconds."""
+    if settings.TTS_BACKEND == "mock":
+        # No real model to swap in dev/test — mirrors the mock-backend
+        # no-op convention every other tts_client function already uses.
+        return
+
+    if settings.TTS_BACKEND == "http":
+        logger.info(f"requesting tts_service load model_id={model_id!r}")
+        response = httpx.post(
+            f"{settings.TTS_SERVICE_URL}/model/{model_id}/load",
+            timeout=httpx.Timeout(connect=5.0, read=300.0, write=30.0, pool=5.0),
+        )
+        response.raise_for_status()
+        return
+
+    raise ValueError(f"Unknown TTS_BACKEND: {settings.TTS_BACKEND!r}")
+
+
 def tts_health() -> bool:
     """Return True when the TTS backend is ready to synthesize."""
     if settings.TTS_BACKEND == "mock":
