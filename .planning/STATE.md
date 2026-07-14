@@ -5,10 +5,10 @@ milestone_name: Generation UX & Config Rework
 current_phase: 6
 current_phase_name: Config Panel — Output Format, Filename & Download
 status: executing
-stopped_at: Phase 5 UI-SPEC approved
-last_updated: "2026-07-14T12:47:59.245Z"
+stopped_at: Phase 6 context gathered
+last_updated: "2026-07-14T13:00:00.000Z"
 last_activity: 2026-07-14
-last_activity_desc: Phase 05 complete, transitioned to Phase 6
+last_activity_desc: Phase 06 context gathered, ready for spike + planning
 progress:
   total_phases: 7
   completed_phases: 2
@@ -24,7 +24,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-13)
 
 **Core value:** Given a long text, produce a natural-sounding, multi-character narrated audio file with minimal manual editing — the LLM does the heavy lifting of casting and segmenting, the user just fine-tunes.
-**Current focus:** Phase 05 — on-demand-model-swap
+**Current focus:** Phase 06 — config-panel-output-format-filename-download
 
 ## Current Position
 
