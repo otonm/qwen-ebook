@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react"
 
 import {
   cancelBatchGeneration,
+  cancelCharacterPreview,
   previewUrl,
   runBatchGeneration,
   triggerCharacterPreview,
@@ -46,6 +47,7 @@ function CharacterPreviewRow({
 }) {
   const [isPlaying, setIsPlaying] = useState(false)
   const [isTriggeringPreview, setIsTriggeringPreview] = useState(false)
+  const [isStoppingPreview, setIsStoppingPreview] = useState(false)
   const audioRef = useRef<HTMLAudioElement>(null)
   const hasPreview = Boolean(character.preview_audio_path)
   // A parent refresh landing the new preview_audio_path is what ends the
@@ -91,6 +93,21 @@ function CharacterPreviewRow({
     }
   }
 
+  async function handleStopPreview() {
+    setIsStoppingPreview(true)
+    try {
+      // cancelCharacterPreview's await only resolves once the backend has
+      // genuinely finished the underlying call and released the lock
+      // (04-03) — that confirmed-stopped signal is what lets us clear
+      // local state honestly (D-03/D-05), not an optimistic guess.
+      await cancelCharacterPreview(character.id)
+    } finally {
+      setIsTriggeringPreview(false)
+      setIsStoppingPreview(false)
+      onRefresh()
+    }
+  }
+
   return (
     <div className="flex items-center gap-2 rounded-md bg-background px-2 py-1.5">
       <Button
@@ -112,7 +129,7 @@ function CharacterPreviewRow({
           type="button"
           size="sm"
           variant="ghost"
-          disabled={isGeneratingPreview || generationLocked}
+          disabled={isGeneratingPreview || isStoppingPreview || generationLocked}
           onClick={() => void handleGeneratePreview()}
         >
           {isGeneratingPreview ? (
@@ -120,6 +137,18 @@ function CharacterPreviewRow({
           ) : (
             "Generate preview"
           )}
+        </Button>
+      )}
+      {isGeneratingPreview && (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={isStoppingPreview}
+          onClick={() => void handleStopPreview()}
+          aria-label={`Stop generating preview for ${character.name}`}
+        >
+          {isStoppingPreview ? "Stopping…" : "Stop"}
         </Button>
       )}
       {hasPreview && (
@@ -190,6 +219,12 @@ export function ConfigPanel({
     setIsStarting(true)
     try {
       await runBatchGeneration(project.id)
+      // generation-stream is request-scoped and self-closes after each
+      // run's terminal event — a second Generate All click needs a fresh
+      // SSE connection or generation.status can never report "running"
+      // again, and the Stop button (gated on isBatchRunning) never
+      // reappears even though the backend is genuinely generating.
+      generation.restart()
     } finally {
       setIsStarting(false)
     }
@@ -263,10 +298,16 @@ export function ConfigPanel({
               disabled={isCancelling}
               onClick={() => void handleStop()}
             >
-              {isCancelling ? <Loader2 className="animate-spin" /> : "Stop"}
+              {isCancelling ? (
+                <>
+                  <Loader2 className="animate-spin" /> Stopping…
+                </>
+              ) : (
+                "Stop"
+              )}
             </Button>
             <p className="text-xs text-muted-foreground">
-              Stops before the next segment — the segment currently generating may still finish.
+              Stop interrupts the segment currently generating immediately.
             </p>
           </div>
         )}

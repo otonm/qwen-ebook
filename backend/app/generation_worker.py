@@ -130,6 +130,18 @@ def _get_generation_queue(project_id: str) -> asyncio.Queue:
     return _generation_progress_queues.setdefault(project_id, asyncio.Queue())
 
 
+def ensure_generation_queue(project_id: str) -> None:
+    """Eagerly create `project_id`'s progress queue before the HTTP handler
+    that starts a run returns. Without this, a client that reconnects its
+    SSE stream immediately after the POST response (the frontend's
+    generation-stream reconnect-per-run pattern) can race the
+    asyncio.create_task'd run_batch_generation's first push_generation_event
+    — has_pending_generation_queue would see no queue yet and take the
+    "nothing running" fast path, closing the stream before a single
+    progress event ever arrives."""
+    _get_generation_queue(project_id)
+
+
 def register_generation_task(label: str, task: asyncio.Task) -> None:
     """Register `task` under `label` (the exact string passed to
     try_claim_generation, e.g. "segment:{id}"/"preview:{id}"/"batch:{id}")

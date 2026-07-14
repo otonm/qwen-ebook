@@ -192,8 +192,29 @@ export async function patchSegment(id: string, body: SegmentPatch): Promise<Segm
   return parseJsonOrThrow(response)
 }
 
-export async function generateSegment(id: string): Promise<Segment> {
+/** GEN-06: fires the segment's generation and returns immediately (202
+ * {"status": "generating"}) — matching 04-03's async contract. No segment
+ * body comes back; the caller must refetch/poll (e.g. onRefresh) to pick up
+ * the resulting audio_path/generation_status once the background task
+ * completes, mirroring triggerCharacterPreview. */
+export async function generateSegment(id: string): Promise<{ status: string }> {
   const response = await fetch(`/segments/${id}/generate`, { method: "POST" })
+  return parseJsonOrThrow(response)
+}
+
+/** GEN-06: true-kill cancel for a single in-flight segment generation.
+ * Returns {"status": "cancelled"} or {"status": "not_running"} if nothing
+ * was in flight for this segment. */
+export async function cancelSegmentGeneration(id: string): Promise<{ status: string }> {
+  const response = await fetch(`/segments/${id}/generate/cancel`, { method: "POST" })
+  return parseJsonOrThrow(response)
+}
+
+/** GEN-07: true-kill cancel for a single in-flight character preview
+ * generation. Returns {"status": "cancelled"} or {"status": "not_running"}
+ * if nothing was in flight for this character. */
+export async function cancelCharacterPreview(id: string): Promise<{ status: string }> {
+  const response = await fetch(`/characters/${id}/preview/cancel`, { method: "POST" })
   return parseJsonOrThrow(response)
 }
 

@@ -83,6 +83,7 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
             characters={project.characters}
             onSegmentChange={handleSegmentChange}
             generationLocked={generationLocked}
+            onRefresh={refetch}
           />
         </div>
         <div className="xl:w-[30%]">
