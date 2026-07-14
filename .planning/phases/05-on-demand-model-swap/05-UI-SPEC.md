@@ -11,6 +11,8 @@ created: 2026-07-14
 
 > Visual and interaction contract for On-Demand Model Swap (CFG-04, CFG-05). This phase adds exactly two new interactive surfaces to an already-built app: (1) a Model dropdown in `ConfigPanel.tsx` replacing the hardcoded `TTS_MODEL_DISPLAY_NAME` display, and (2) a disabled-cell treatment for the Voice Instructions column in `SegmentTable.tsx` while 0.6B is active. Every token, component, and copy convention below is inherited from the existing codebase — no new colors, spacing values, or component primitives are introduced.
 
+**Focal point:** the Model `Select` trigger is the primary visual anchor of the Config Panel whenever a swap-decision is in play — it sits above and drives the state of everything else this phase touches (the D-03 warning note directly beneath it, and the disabled Voice Instructions cells in the table below). Nothing else in `ConfigPanel.tsx` competes for attention during a swap: the spinner/`"Switching model…"` state and the `swapError` message both render inline at that same anchor point, not elsewhere on the page.
+
 ---
 
 ## Design System
@@ -29,19 +31,17 @@ created: 2026-07-14
 
 ## Spacing Scale
 
-This codebase's shipped shadcn components already use a fixed, consistent (if not strictly 8pt) scale — reuse it verbatim, do not introduce new values:
+This is the phase-specific spacing contract — a strict 4-point subset (all declared values are multiples of 4). Two non-4-multiple tokens exist elsewhere in the already-shipped codebase (`gap-0.5` / 2px, `gap-1.5` / 6px, e.g. `CharacterPreviewRow` row padding) but neither is used by any new markup in this phase, so they are intentionally excluded from this table rather than carried forward as an "exception" — the phase's own new elements (Model field, warning note) use `gap-1` (4px), not `gap-0.5`, precisely to stay on-scale. Do not introduce `gap-0.5`/`gap-1.5` in new code touched by this phase.
 
 | Token | Value | Usage (existing precedent) |
 |-------|-------|------|
-| 2xs | 2px | `gap-0.5` — `ConfigField` label/value stack |
-| xs | 4px | `gap-1` — icon-to-label gaps, error message stack |
-| sm | 6px | `gap-1.5` / `py-1.5` — `CharacterPreviewRow` row padding |
-| sm+ | 8px | `gap-2` / `p-2` — row/section internal gaps |
+| xs | 4px | `gap-1` — icon-to-label gaps, error message stack, Model field's label/value stack (this phase) |
+| sm | 8px | `gap-2` / `p-2` — row/section internal gaps |
 | md | 12px | `gap-3` — `Generation` section stack |
 | md+ | 16px | `p-4` — `ConfigPanel` outer container padding |
 | lg | 24px | `gap-6` — spacing between `ConfigPanel` sections (Config / Characters / Generation) |
 
-Exceptions for this phase: none. The new Model field and its warning note slot into the existing `ConfigField`-style `flex flex-col gap-0.5` wrapper inside the existing `gap-6`-spaced Config section; the disabled-cell treatment adds zero new spacing (it reuses `Textarea`'s existing `min-h-16 bg-background text-sm` cell, only toggling the `disabled` prop).
+Exceptions for this phase: none. The new Model field and its warning note slot into a `flex flex-col gap-1` wrapper (4px, on-scale) inside the existing `gap-6`-spaced Config section; the disabled-cell treatment adds zero new spacing (it reuses `Textarea`'s existing `min-h-16 bg-background text-sm` cell, only toggling the `disabled` prop).
 
 ---
 
@@ -93,7 +93,7 @@ Inherited from `frontend/src/index.css` (zinc base, oklch tokens, light+dark via
 ### 1. Model field (`ConfigPanel.tsx`, replaces the hardcoded `ConfigField label="Model"` row)
 
 ```
-<div className="flex flex-col gap-0.5">
+<div className="flex flex-col gap-1">
   <span className="text-xs font-semibold text-muted-foreground">Model</span>
   <Select value={project.tts_model} onValueChange={handleModelChange} disabled={isSwapping}>
     <SelectTrigger size="sm" aria-label="TTS model" className="w-full">
