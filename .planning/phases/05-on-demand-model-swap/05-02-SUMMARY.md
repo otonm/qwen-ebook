@@ -149,3 +149,7 @@ None — no external service configuration required. No migration file needed ei
 ---
 *Phase: 05-on-demand-model-swap*
 *Completed: 2026-07-14*
+
+## Self-Check: PASSED
+
+All created/modified files verified present on disk; all 5 task/summary commit hashes (`2fe74d0`, `9d13b2a`, `7993941`, `edf45fa`, `8c0bdb3`) verified present in git log.
