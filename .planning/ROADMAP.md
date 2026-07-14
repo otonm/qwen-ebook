@@ -23,7 +23,7 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
 **Milestone Goal:** Replace ambiguous status indicators with a single clear color-coded generate/stop/play control everywhere audio is generated, and give the user real control over model, output format, filename, and downloading the finished file.
 
 - [x] **Phase 4: Immediate Cancellation** - Stopping a segment, character preview, or batch generation interrupts the in-flight GPU call immediately, not just the queue (completed 2026-07-14)
-- [ ] **Phase 5: On-Demand Model Swap** - User can switch between the 1.7B and 0.6B Qwen TTS models per project, with VRAM-safe load/unload and a steering-limitation warning
+- [x] **Phase 5: On-Demand Model Swap** - User can switch between the 1.7B and 0.6B Qwen TTS models per project, with VRAM-safe load/unload and a steering-limitation warning (completed 2026-07-14)
 - [ ] **Phase 6: Config Panel — Output Format, Filename & Download** - User can pick FLAC/MP3/Opus, set a custom filename, and download the finished joined file
 - [ ] **Phase 7: Unified Generate/Stop/Play Button & Trimmed Segment Table** - One consistent yellow/red/green control replaces all four hand-rolled generate/play implementations and the separate status badge column
 
@@ -82,7 +82,7 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
   3. When the 0.6B model is selected, the UI warns the user that free-text voice-instruction steering isn't supported by that checkpoint
   4. Segments generated after a model swap reflect the newly selected model — no stale cached audio from the previously loaded model is served
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans complete
 **UI hint**: yes
 
 **Wave 1** *(parallel — disjoint files)*
@@ -92,7 +92,7 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
 
 **Wave 2** *(blocked on Wave 1)*
 
-- [ ] 05-03-PLAN.md — frontend + integration: Config Panel Model dropdown (D-01/D-02/D-03), disabled Voice Instructions cells on 0.6B (D-04), end-to-end human-verify on the deploy target
+- [x] 05-03-PLAN.md — frontend + integration: Config Panel Model dropdown (D-01/D-02/D-03), disabled Voice Instructions cells on 0.6B (D-04), end-to-end human-verify on the deploy target
 
 ### Phase 6: Config Panel — Output Format, Filename & Download
 
@@ -133,6 +133,6 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
 | 2. LLM Cast Detection & Review Wizard | v1.0 | 5/5 | Complete | 2026-07-10 |
 | 3. Editable Table, Full Generation Pipeline, Persistence & Deployment | v1.0 | 9/9 | Complete | 2026-07-12 |
 | 4. Immediate Cancellation | v1.1 | 4/4 | Complete    | 2026-07-14 |
-| 5. On-Demand Model Swap | v1.1 | 2/3 | In Progress|  |
+| 5. On-Demand Model Swap | v1.1 | 3/3 | Complete   | 2026-07-14 |
 | 6. Config Panel — Output Format, Filename & Download | v1.1 | 0/TBD | Not started | - |
 | 7. Unified Generate/Stop/Play Button & Trimmed Segment Table | v1.1 | 0/TBD | Not started | - |
