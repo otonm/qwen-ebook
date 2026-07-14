@@ -1,9 +1,12 @@
 """Internal FastAPI server for the GPU-scoped Qwen3-TTS inference container.
 
 Implements the internal contract locked in 01-SKELETON.md (extended with
-`instruct` — see model.py's synthesize_wav):
-  POST /synthesize  {"text": str, "speaker": str | null, "instruct": str | null} -> 200 audio/wav
-  GET  /healthz      -> 200 only once the model is loaded and resident
+`instruct` — see model.py's synthesize_wav; extended again in Phase 5 with
+on-demand model swap, CFG-04):
+  POST /synthesize             {"text": str, "speaker": str | null, "instruct": str | null}
+                                -> 200 audio/wav
+  POST /model/{model_id}/load  -> 200 once the requested checkpoint is resident
+  GET  /healthz                -> 200 only once a model is loaded and resident
 
 Also runs a periodic GPU keepalive matmul (ROCm-specific gotcha — AMD's
 power management downclocks an idle GPU, spiking latency on the first
@@ -26,9 +29,15 @@ logging.basicConfig(level=logging.INFO)
 
 GPU_KEEPALIVE_INTERVAL = float(os.environ.get("GPU_KEEPALIVE_INTERVAL", "15"))
 
-# Readiness flag — imported lazily below so `import tts_service.model` (which
-# triggers the actual ~1.7B-parameter model load) happens at server startup,
-# not merely at module-import time of this file during test collection.
+# D-01 (Claude's Discretion / RESEARCH.md): default checkpoint loaded at
+# process startup — preserves today's baseline behavior. Swapping to the
+# other checkpoint afterward is what POST /model/{model_id}/load is for.
+DEFAULT_MODEL_ID = "1.7b"
+
+# Readiness flag — tts_service.model is imported lazily below so the actual
+# model load (now inside ensure_loaded, not at import time — Phase 5) happens
+# at server startup via lifespan, not merely at module-import time of this
+# file during test collection.
 _model_module = None
 _ready = False
 
@@ -57,13 +66,17 @@ async def _keepalive_loop() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _model_module, _ready
-    # Import triggers model.py's module-level Qwen3TTSModel.from_pretrained()
-    # call — the ONE place the 1.7B model is loaded, at process startup.
+    # Phase 5: tts_service.model no longer loads a checkpoint at import time
+    # (see model.py) — this ensure_loaded call is the ONE place the default
+    # model is loaded, at process startup. run_in_threadpool because it's a
+    # synchronous, multi-second GPU load — same discipline as /synthesize.
     from tts_service import model as model_module
 
     _model_module = model_module
+    logger.info(f"Loading default model {DEFAULT_MODEL_ID!r}...")
+    await run_in_threadpool(model_module.ensure_loaded, DEFAULT_MODEL_ID)
     _ready = True
-    logger.info("Model loaded; default speaker = %s", model_module.DEFAULT_SPEAKER)
+    logger.info(f"Model loaded; default speaker = {model_module.DEFAULT_SPEAKER}")
 
     keepalive_task = asyncio.create_task(_keepalive_loop())
     try:
@@ -136,6 +149,36 @@ async def synthesize(req: SynthesizeRequest) -> Response:
         return Response(status_code=500, content="synthesis failed")
 
     return Response(content=wav_bytes, media_type="audio/wav")
+
+
+@app.post("/model/{model_id}/load")
+async def load_model_route(model_id: str) -> Response:
+    """Swaps the resident checkpoint to `model_id` (CFG-04). Allowlist-
+    validated against MODEL_CHOICES here too (V5 defense-in-depth — the
+    main backend also validates before calling this route, T-05-01) so an
+    arbitrary model_id can never reach from_pretrained. _ready flips False
+    for the swap's duration (racing /synthesize gets a clean 503, T-05-02)
+    and is set True in BOTH the success and failure branches — on failure
+    the OLD model is still resident (ensure_loaded only deletes it after
+    the new load succeeds, D-02), so the service is still usable."""
+    global _ready
+    if _model_module is None:
+        return Response(status_code=503, content="model not loaded")
+    if model_id not in _model_module.MODEL_CHOICES:
+        return Response(status_code=422, content=f"unknown model_id {model_id!r}")
+
+    _ready = False
+    try:
+        await run_in_threadpool(_model_module.ensure_loaded, model_id)
+    except Exception:
+        # Broad catch is deliberate: any from_pretrained/CUDA failure should
+        # surface as a clean 500 with a logged traceback, matching the
+        # /synthesize convention above.
+        logger.exception("model swap failed")
+        _ready = True  # old model is still resident (del happens AFTER new load succeeds)
+        return Response(status_code=500, content="model swap failed")
+    _ready = True
+    return Response(status_code=200, content="ok")
 
 
 @app.post("/cancel")
