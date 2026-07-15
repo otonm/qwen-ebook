@@ -28,6 +28,13 @@ class Project(SQLModel, table=True):
     # per-project, so a swap in one project can't silently affect another's
     # cache correctness. Defaults to today's baseline model.
     tts_model: str = "1.7b"
+    # Phase 6 (CFG-06/CFG-07): per-project output format and display filename,
+    # read live at join/download time — never cached, same discipline as
+    # tts_model above. output_format drives the ffmpeg codec dispatch in
+    # audio_join.CODEC_TABLE; output_filename is the user-facing download
+    # name only (the on-disk path stays a server-generated uuid4 name).
+    output_format: str = "mp3"
+    output_filename: str | None = None
 
 
 class Character(SQLModel, table=True):

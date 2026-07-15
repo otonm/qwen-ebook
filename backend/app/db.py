@@ -51,6 +51,8 @@ _NEW_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("created_at", "TEXT"),
         ("output_path", "TEXT"),
         ("tts_model", "TEXT DEFAULT '1.7b'"),
+        ("output_format", "TEXT DEFAULT 'mp3'"),
+        ("output_filename", "TEXT"),
     ],
 }
 
