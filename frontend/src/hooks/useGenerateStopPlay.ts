@@ -122,12 +122,16 @@ export function useGenerateStopPlay({
       // that's the confirmed-stopped signal itself, not an optimistic
       // guess, so clearing local state here is honest per D-03/D-05.
       await onStop()
-    } catch (err) {
-      setError(errorMessage(err, "Couldn't stop generation."))
-    } finally {
       setIsGenerating(false)
       setIsStopping(false)
       onRefresh()
+    } catch (err) {
+      // CR-02: onStop() itself failed — nothing is confirmed, the backend
+      // generation may still be running. Don't optimistically clear
+      // isGenerating; only clear isStopping and let the next poll/refresh
+      // reconcile the real state.
+      setIsStopping(false)
+      setError(errorMessage(err, "Couldn't stop generation."))
     }
   }
 
