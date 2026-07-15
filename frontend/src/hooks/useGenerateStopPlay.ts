@@ -40,6 +40,13 @@ export function useGenerateStopPlay({
   const [isGenerating, setIsGenerating] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // WR-04: cache-busting counter for the row's audio URL — bumped only when
+  // the settle effect below genuinely observes a generating->settled
+  // transition, i.e. exactly when new audio actually landed for this row.
+  // Consumers pass this as the `version` query param to previewUrl/
+  // segmentAudioUrl so the <audio src> changes on regeneration instead of
+  // reusing the same fixed per-id URL a browser is free to serve from cache.
+  const [audioVersion, setAudioVersion] = useState(0)
   // Tracks whether we've actually seen this row hit "generating" (from
   // either our own trigger or an external one, e.g. a batch run) since the
   // last settle — the signal a poll/refetch uses to know the row has since
@@ -126,6 +133,7 @@ export function useGenerateStopPlay({
       hasObservedGeneratingRef.current = false
       setIsGenerating(false)
       setIsStopping(false)
+      setAudioVersion((v) => v + 1)
     }
   }, [isExternallyGenerating, isGenerating, hasAudio])
 
@@ -175,5 +183,5 @@ export function useGenerateStopPlay({
         ? "ready"
         : "idle"
 
-  return { status, error, handleGenerate, handleStop }
+  return { status, error, handleGenerate, handleStop, audioVersion }
 }

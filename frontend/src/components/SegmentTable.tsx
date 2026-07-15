@@ -71,7 +71,7 @@ function GeneratePlayButton({
   const autoplayRef = useRef(false)
   const hasAudio = Boolean(segment.audio_path)
 
-  const { status, error, handleGenerate, handleStop } = useGenerateStopPlay({
+  const { status, error, handleGenerate, handleStop, audioVersion } = useGenerateStopPlay({
     hasAudio,
     isExternallyGenerating: segment.generation_status === "generating",
     poll: true,
@@ -118,7 +118,7 @@ function GeneratePlayButton({
       {hasAudio && (
         <audio
           ref={audioRef}
-          src={segmentAudioUrl(segment.id)}
+          src={segmentAudioUrl(segment.id, audioVersion)}
           onPlay={() => setIsPlaying(true)}
           onPause={() => setIsPlaying(false)}
           onEnded={() => setIsPlaying(false)}

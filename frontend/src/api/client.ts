@@ -204,8 +204,13 @@ export async function getGenerationLockStatus(): Promise<GenerationLockStatus> {
   return parseJsonOrThrow(response)
 }
 
-export function previewUrl(characterId: string): string {
-  return `/characters/${characterId}/preview.wav`
+// WR-04: `version` is a client-tracked cache-busting counter (see
+// useGenerateStopPlay's audioVersion) — this URL is otherwise fixed per id,
+// and nothing else forces a browser to refetch new bytes after a
+// regeneration completes, since the <audio> element's src string wouldn't
+// otherwise change.
+export function previewUrl(characterId: string, version?: number): string {
+  return `/characters/${characterId}/preview.wav${version != null ? `?v=${version}` : ""}`
 }
 
 export async function patchSegment(id: string, body: SegmentPatch): Promise<Segment> {
@@ -243,8 +248,9 @@ export async function cancelCharacterPreview(id: string): Promise<{ status: stri
   return parseJsonOrThrow(response)
 }
 
-export function segmentAudioUrl(id: string): string {
-  return `/segments/${id}/audio.wav`
+// WR-04: see previewUrl's comment — same fixed-URL-per-id caching risk.
+export function segmentAudioUrl(id: string, version?: number): string {
+  return `/segments/${id}/audio.wav${version != null ? `?v=${version}` : ""}`
 }
 
 export async function bulkReassignSegments(
@@ -324,7 +330,10 @@ export function downloadUrl(projectId: string): string {
 /** GEN-11: same route as downloadUrl, used as the `src` for a hidden
  * <audio> element that backs the batch site's green "Play" state once the
  * joined output exists — no new backend endpoint, FileResponse already
- * supports Range requests for seeking. */
-export function outputUrl(projectId: string): string {
-  return `/projects/${projectId}/download`
+ * supports Range requests for seeking. WR-04: see previewUrl's comment —
+ * same fixed-URL-per-id caching risk; `version` should bump once per
+ * completed join (e.g. ConfigPanel's own counter, tracked off
+ * generation.status reaching "ready"). */
+export function outputUrl(projectId: string, version?: number): string {
+  return `/projects/${projectId}/download${version != null ? `?v=${version}` : ""}`
 }

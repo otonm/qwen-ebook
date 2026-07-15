@@ -67,7 +67,7 @@ function CharacterPreviewRow({
   const audioRef = useRef<HTMLAudioElement>(null)
   const hasPreview = Boolean(character.preview_audio_path)
 
-  const { status, error, handleGenerate, handleStop } = useGenerateStopPlay({
+  const { status, error, handleGenerate, handleStop, audioVersion } = useGenerateStopPlay({
     hasAudio: hasPreview,
     isExternallyGenerating: false,
     poll: true,
@@ -104,7 +104,7 @@ function CharacterPreviewRow({
         {hasPreview && (
           <audio
             ref={audioRef}
-            src={previewUrl(character.id)}
+            src={previewUrl(character.id, audioVersion)}
             onPlay={() => setIsPlaying(true)}
             onPause={() => setIsPlaying(false)}
             onEnded={() => setIsPlaying(false)}
@@ -147,6 +147,19 @@ export function ConfigPanel({
   // isPlaying/audioRef pattern.
   const [isOutputPlaying, setIsOutputPlaying] = useState(false)
   const outputAudioRef = useRef<HTMLAudioElement>(null)
+  // WR-04: outputUrl is a fixed URL per project id — bump a cache-busting
+  // counter each time a batch run actually completes (generation.status
+  // reaching "ready") so a regenerated join doesn't risk a browser serving
+  // the previous run's cached bytes. Same render-time state-adjustment
+  // pattern as lastSyncedFilename below.
+  const [outputVersion, setOutputVersion] = useState(0)
+  const [lastGenerationStatus, setLastGenerationStatus] = useState(generation.status)
+  if (generation.status !== lastGenerationStatus) {
+    setLastGenerationStatus(generation.status)
+    if (generation.status === "ready") {
+      setOutputVersion((v) => v + 1)
+    }
+  }
   const [isSwapping, setIsSwapping] = useState(false)
   const [swapError, setSwapError] = useState<string | null>(null)
   const [filenameDraft, setFilenameDraft] = useState(project.output_filename ?? "")
@@ -414,7 +427,7 @@ export function ConfigPanel({
         {hasOutput && (
           <audio
             ref={outputAudioRef}
-            src={outputUrl(project.id)}
+            src={outputUrl(project.id, outputVersion)}
             onPlay={() => setIsOutputPlaying(true)}
             onPause={() => setIsOutputPlaying(false)}
             onEnded={() => setIsOutputPlaying(false)}

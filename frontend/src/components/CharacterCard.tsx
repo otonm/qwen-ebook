@@ -82,6 +82,7 @@ export function CharacterCard({
     error: previewError,
     handleGenerate: handleGeneratePreview,
     handleStop: handleStopPreview,
+    audioVersion: previewVersion,
   } = useGenerateStopPlay({
     hasAudio: hasPreview,
     isExternallyGenerating: false,
@@ -238,7 +239,7 @@ export function CharacterCard({
           {hasPreview && (
             <audio
               ref={audioRef}
-              src={previewUrl(character.id)}
+              src={previewUrl(character.id, previewVersion)}
               onPlay={() => setIsPlaying(true)}
               onPause={() => setIsPlaying(false)}
               onEnded={() => setIsPlaying(false)}
