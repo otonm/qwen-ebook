@@ -75,9 +75,22 @@ export function useGenerateStopPlay({
 
   // The row settles (leaves "generating") once a refetch/SSE update lands —
   // clear both the generating and stopping flags only once we've genuinely
-  // observed the transition, never on the first stale render.
+  // observed the transition, never on the first stale render. A transition
+  // is observed either via a genuine external signal (isExternallyGenerating,
+  // e.g. segment.generation_status) OR, for sites with no such signal —
+  // character previews (CharacterPreviewRow/CharacterCard) always pass
+  // isExternallyGenerating: false — via this hook's own isGenerating still
+  // being true while hasAudio hasn't caught up yet. Bug fix (07-05
+  // checkpoint): before this, character-preview sites never observed any
+  // transition at all, so isGenerating was never cleared once the poll's
+  // onRefresh picked up the finished preview — the button stayed stuck on
+  // the red spinner forever even though hasAudio had gone true. Folding
+  // the self-triggered case into this ref-guarded branch (rather than a
+  // second effect keyed directly off hasAudio) keeps the "settle" write
+  // gated on a genuinely-observed prior generating state, not a bare
+  // prop-derived setState.
   useEffect(() => {
-    if (isExternallyGenerating) {
+    if (isExternallyGenerating || (isGenerating && !hasAudio)) {
       hasObservedGeneratingRef.current = true
       return
     }
@@ -86,7 +99,7 @@ export function useGenerateStopPlay({
       setIsGenerating(false)
       setIsStopping(false)
     }
-  }, [isExternallyGenerating])
+  }, [isExternallyGenerating, isGenerating, hasAudio])
 
   async function handleGenerate() {
     setIsGenerating(true)
