@@ -38,6 +38,8 @@ Given a long text, produce a natural-sounding, multi-character narrated audio fi
 - [x] User can upload an EPUB (.epub) source file, with chapter/reading-order text extracted and markup/footnotes stripped — Validated in Phase 2 (ING-02, plan 02-02): `epub_parser.py` (ebooklib + BeautifulSoup/lxml), spine-order extraction, footnote stripping, fail-fast on unrecoverable chapters, wired into `POST /projects`
 - [x] User can pick between two Qwen TTS model sizes (1.7B / 0.6B) per project, with only one resident in VRAM at a time and a warning that 0.6B drops free-text voice-instruction steering — Validated in Phase 5 (CFG-04/CFG-05): `ensure_loaded(model_id)` swap engine (real-hardware-verified: 12 alternating swap cycles, zero VRAM fragmentation drift, 4.7-6.0s latency), `Project.tts_model` threaded through `compute_cache_key` so a swap can never serve stale cross-model audio, and a persistent D-03 warning note replacing the old hardcoded model display. A code review caught and fixed a real correctness gap before sign-off (CR-01, commit `d675fa4`): the generation path didn't reconcile tts_service's single resident model with the *current* project before synthesizing, so a swap in one project could silently produce audio under the wrong model for a different project.
 
+- [x] User can choose the output audio format (FLAC, MP3, or Opus — WAV dropped), set a custom output filename, and download the finished joined file via a blue Download button in the Config Panel — Validated in Phase 6 (CFG-06/07/08): per-project `output_format`/`output_filename` columns, 3-way ffmpeg codec dispatch, `PATCH /projects/{id}` + `GET /projects/{id}/download` routes, human-verified end-to-end on the deploy target (all three formats download and play; filename sanitizer amended during UAT to replace path separators with underscores, commit 3f49822)
+
 ### Active
 
 - [ ] v1.1 Generation UX & Config Rework — see Current Milestone above; REQ-IDs pending REQUIREMENTS.md
@@ -101,4 +103,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-14 after Phase 5 (On-Demand Model Swap) completion*
+*Last updated: 2026-07-15 after Phase 6 (Config Panel — Output Format, Filename & Download) completion*
