@@ -47,10 +47,14 @@ export interface Project {
   filename: string
   status: "analyzing" | "ready" | "error"
   error_detail: string | null
-  // CFG-01: set once the whole-project batch join (plan 03-03) completes;
-  // output_format is a fixed server setting, not a per-project choice.
+  // CFG-01: set once the whole-project batch join (plan 03-03) completes.
   output_path: string | null
+  // CFG-06/CFG-07: per-project choice (same status as tts_model), no longer
+  // a fixed server setting — PATCH /projects/{id} persists it.
   output_format: string
+  // CFG-07: server-sanitized filename stem (no extension); null until the
+  // user sets one, in which case the UI falls back to filename's stem.
+  output_filename: string | null
   // CFG-04: per-project source of truth for which TTS checkpoint is
   // resident ("1.7b" | "0.6b") — server state, so a failed swap (D-02)
   // reverts here automatically on refetch rather than needing local
@@ -293,4 +297,26 @@ export async function setProjectModel(id: string, model_id: string): Promise<Pro
 export async function triggerCharacterPreview(characterId: string): Promise<{ status: string }> {
   const response = await fetch(`/characters/${characterId}/preview`, { method: "POST" })
   return parseJsonOrThrow(response)
+}
+
+/** CFG-06/CFG-07: persists output_format and/or output_filename. The server
+ * validates format against its codec allowlist (422 otherwise) and sanitizes
+ * filename — the returned Project reflects the server's sanitized values,
+ * never an optimistic echo of what was sent. */
+export async function patchProjectConfig(
+  id: string,
+  body: { output_format?: string; output_filename?: string }
+): Promise<Project> {
+  const response = await fetch(`/projects/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  return parseJsonOrThrow(response)
+}
+
+/** CFG-08: the joined output's download URL — the browser follows this
+ * directly (native `<a href download>`), never fetched into JS/blob. */
+export function downloadUrl(projectId: string): string {
+  return `/projects/${projectId}/download`
 }
