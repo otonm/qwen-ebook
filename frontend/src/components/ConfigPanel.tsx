@@ -1,12 +1,11 @@
-import { Loader2, Pause, Play, TriangleAlert } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import { Loader2, TriangleAlert } from "lucide-react"
+import { useRef, useState } from "react"
 
 import {
   cancelBatchGeneration,
   cancelCharacterPreview,
   downloadUrl,
   errorMessage,
-  GENERATION_POLL_CEILING_MS,
   patchProjectConfig,
   previewUrl,
   runBatchGeneration,
@@ -17,6 +16,7 @@ import {
   type Segment,
 } from "@/api/client"
 import { Button } from "@/components/ui/button"
+import { GenerateStopPlayButton } from "@/components/GenerateStopPlayButton"
 import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
 import {
@@ -26,6 +26,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { useGenerateStopPlay } from "@/hooks/useGenerateStopPlay"
 import type { GenerationStreamState } from "@/hooks/useGenerationStream"
 
 // CFG-04: verbatim dropdown option labels (UI-SPEC Copywriting Contract) —
@@ -62,43 +63,17 @@ function CharacterPreviewRow({
   generationLocked: boolean
 }) {
   const [isPlaying, setIsPlaying] = useState(false)
-  const [isTriggeringPreview, setIsTriggeringPreview] = useState(false)
-  const [isStoppingPreview, setIsStoppingPreview] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
   const hasPreview = Boolean(character.preview_audio_path)
-  // A parent refresh landing the new preview_audio_path is what ends the
-  // "generating" state — hasPreview flipping true unmounts the trigger
-  // button below, so isTriggeringPreview never needs an explicit reset.
-  const isGeneratingPreview = isTriggeringPreview && !hasPreview
 
-  // Preview generation is a background task (no SSE for it) — poll
-  // steadily after triggering so Play enables once it lands, without the
-  // user needing to manually refresh. WR-04 fix: ceiling raised to
-  // GENERATION_POLL_CEILING_MS (well above the backend's own 300s synth
-  // timeout) — real GPU synthesis can run well past a few seconds on a
-  // cold/idle-GPU downclock-recovery spike (tts_service/model.py's
-  // keepalive_matmul; a fresh TTS container's very first request measured
-  // ~38s in production), so only a genuinely failed/hung call should hit
-  // this ceiling, never a normal slow one.
-  useEffect(() => {
-    if (!isGeneratingPreview) return undefined
-    const interval = setInterval(onRefresh, 1500)
-    // Code review WR-02: hitting the ceiling used to only stop the poll,
-    // leaving isTriggeringPreview stuck true forever (spinner with no
-    // recovery path) whenever the backend silently swallowed a preview
-    // failure. Reset the trigger state and surface an error so the user
-    // can retry instead of reloading the page.
-    const timeout = setTimeout(() => {
-      clearInterval(interval)
-      setIsTriggeringPreview(false)
-      setError("Preview generation is taking too long — try again.")
-    }, GENERATION_POLL_CEILING_MS)
-    return () => {
-      clearInterval(interval)
-      clearTimeout(timeout)
-    }
-  }, [isGeneratingPreview, onRefresh])
+  const { status, error, handleGenerate, handleStop } = useGenerateStopPlay({
+    hasAudio: hasPreview,
+    isExternallyGenerating: false,
+    poll: true,
+    onGenerate: () => triggerCharacterPreview(character.id),
+    onStop: () => cancelCharacterPreview(character.id),
+    onRefresh,
+  })
 
   function togglePlayback() {
     const audio = audioRef.current
@@ -110,80 +85,21 @@ function CharacterPreviewRow({
     }
   }
 
-  async function handleGeneratePreview() {
-    setIsTriggeringPreview(true)
-    setError(null)
-    try {
-      await triggerCharacterPreview(character.id)
-      onRefresh()
-    } catch (err) {
-      setIsTriggeringPreview(false)
-      setError(errorMessage(err, "Couldn't start the preview."))
-    }
-  }
-
-  async function handleStopPreview() {
-    setIsStoppingPreview(true)
-    setError(null)
-    try {
-      // cancelCharacterPreview's await only resolves once the backend has
-      // genuinely finished the underlying call and released the lock
-      // (04-03) — that confirmed-stopped signal is what lets us clear
-      // local state honestly (D-03/D-05), not an optimistic guess.
-      await cancelCharacterPreview(character.id)
-    } catch (err) {
-      setError(errorMessage(err, "Couldn't stop the preview."))
-    } finally {
-      setIsTriggeringPreview(false)
-      setIsStoppingPreview(false)
-      onRefresh()
-    }
-  }
-
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center gap-2 rounded-md bg-background px-2 py-1.5">
-        <Button
-          type="button"
-          size="icon-sm"
-          variant={isPlaying ? "default" : "outline"}
-          disabled={!hasPreview}
-          onClick={togglePlayback}
-          title={hasPreview ? undefined : "No preview generated yet"}
-          aria-label={
-            isPlaying ? `Pause preview for ${character.name}` : `Play preview for ${character.name}`
-          }
-        >
-          {isPlaying ? <Pause /> : <Play />}
-        </Button>
         <span className="flex-1 truncate text-sm">{character.name}</span>
-        {!hasPreview && (
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            disabled={isGeneratingPreview || isStoppingPreview || generationLocked}
-            onClick={() => void handleGeneratePreview()}
-          >
-            {isGeneratingPreview ? (
-              <Loader2 className="size-3 animate-spin" />
-            ) : (
-              "Generate preview"
-            )}
-          </Button>
-        )}
-        {isGeneratingPreview && (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={isStoppingPreview}
-            onClick={() => void handleStopPreview()}
-            aria-label={`Stop generating preview for ${character.name}`}
-          >
-            {isStoppingPreview ? "Stopping…" : "Stop"}
-          </Button>
-        )}
+        <GenerateStopPlayButton
+          size="sm"
+          status={status}
+          isPlaying={isPlaying}
+          disabled={generationLocked && status === "idle"}
+          disabledReason="Another generation is already running."
+          subjectLabel={`preview for ${character.name}`}
+          onGenerate={() => void handleGenerate()}
+          onStop={() => void handleStop()}
+          onTogglePlay={togglePlayback}
+        />
         {hasPreview && (
           <audio
             ref={audioRef}
