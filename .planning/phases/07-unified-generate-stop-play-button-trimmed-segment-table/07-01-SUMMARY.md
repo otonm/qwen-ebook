@@ -127,3 +127,7 @@ None - plan executed exactly as written.
 ---
 *Phase: 07-unified-generate-stop-play-button-trimmed-segment-table*
 *Completed: 2026-07-15*
+
+## Self-Check: PASSED
+
+All created files verified present: `frontend/src/api/client.ts`, `frontend/src/hooks/useGenerateStopPlay.ts`, `frontend/src/components/GenerateStopPlayButton.tsx`, this SUMMARY.md. All 4 commits (`d670ee5`, `5488fe8`, `456d5d6`, `bb52937`) verified present in git log.
