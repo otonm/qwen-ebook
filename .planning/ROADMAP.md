@@ -24,7 +24,7 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
 
 - [x] **Phase 4: Immediate Cancellation** - Stopping a segment, character preview, or batch generation interrupts the in-flight GPU call immediately, not just the queue (completed 2026-07-14)
 - [x] **Phase 5: On-Demand Model Swap** - User can switch between the 1.7B and 0.6B Qwen TTS models per project, with VRAM-safe load/unload and a steering-limitation warning (completed 2026-07-14)
-- [ ] **Phase 6: Config Panel — Output Format, Filename & Download** - User can pick FLAC/MP3/Opus, set a custom filename, and download the finished joined file
+- [x] **Phase 6: Config Panel — Output Format, Filename & Download** - User can pick FLAC/MP3/Opus, set a custom filename, and download the finished joined file (completed 2026-07-15)
 - [ ] **Phase 7: Unified Generate/Stop/Play Button & Trimmed Segment Table** - One consistent yellow/red/green control replaces all four hand-rolled generate/play implementations and the separate status badge column
 
 ## Phase Details
@@ -106,7 +106,7 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
   3. Once the joined file is ready, user can click a blue "Download" button to save it under the chosen filename
   4. The downloaded file matches the selected format (correct extension, content type, and audio codec)
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans complete
 **UI hint**: yes
 
 **Wave 1**
@@ -119,7 +119,7 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
 
 **Wave 3** *(blocked on Wave 2)*
 
-- [ ] 06-03-PLAN.md — human-verify: format/filename/download end-to-end on the deploy target (checkpoint-gated)
+- [x] 06-03-PLAN.md — human-verify: format/filename/download end-to-end on the deploy target (checkpoint-gated)
 
 ### Phase 7: Unified Generate/Stop/Play Button & Trimmed Segment Table
 
@@ -146,5 +146,5 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
 | 3. Editable Table, Full Generation Pipeline, Persistence & Deployment | v1.0 | 9/9 | Complete | 2026-07-12 |
 | 4. Immediate Cancellation | v1.1 | 4/4 | Complete    | 2026-07-14 |
 | 5. On-Demand Model Swap | v1.1 | 3/3 | Complete    | 2026-07-14 |
-| 6. Config Panel — Output Format, Filename & Download | v1.1 | 2/3 | In Progress|  |
+| 6. Config Panel — Output Format, Filename & Download | v1.1 | 3/3 | Complete   | 2026-07-15 |
 | 7. Unified Generate/Stop/Play Button & Trimmed Segment Table | v1.1 | 0/TBD | Not started | - |
