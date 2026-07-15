@@ -442,6 +442,11 @@ export function ConfigPanel({
             </p>
           </div>
         )}
+        {generation.status === "error" && failedCount === 0 && (
+          <p className="text-xs text-destructive" role="alert">
+            {generation.errorDetail ?? "Generation failed unexpectedly. Try Generate All again."}
+          </p>
+        )}
         {batchError && (
           <p className="text-xs text-destructive" role="alert">
             {batchError}
