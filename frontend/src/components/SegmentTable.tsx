@@ -5,29 +5,20 @@ import {
   type RowSelectionState,
   useReactTable,
 } from "@tanstack/react-table"
-import {
-  AlertCircle,
-  CheckCircle2,
-  Clock,
-  Loader2,
-  Pause,
-  Play,
-} from "lucide-react"
+import { Loader2 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 
 import {
   bulkReassignSegments,
   cancelSegmentGeneration,
   errorMessage,
-  GENERATION_POLL_CEILING_MS,
   generateSegment,
   patchSegment,
   segmentAudioUrl,
   type Character,
-  type GenerationStatus,
   type Segment,
 } from "@/api/client"
-import { Badge } from "@/components/ui/badge"
+import { GenerateStopPlayButton } from "@/components/GenerateStopPlayButton"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
@@ -46,6 +37,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
+import { useGenerateStopPlay } from "@/hooks/useGenerateStopPlay"
 
 interface SegmentTableProps {
   segments: Segment[]
@@ -57,45 +49,14 @@ interface SegmentTableProps {
 
 const columnHelper = createColumnHelper<Segment>()
 
-// UI-SPEC Generation Status Indicators table — prescriptive badge/icon
-// mapping so no per-status color/icon is invented ad hoc. "queued" shares
-// "pending"'s look (batch-only sub-state, no visual distinction needed).
-const STATUS_BADGE: Record<
-  GenerationStatus,
-  {
-    label: string
-    icon: typeof Clock
-    variant: "outline" | "default" | "secondary" | "destructive"
-  }
-> = {
-  pending: { label: "Pending", icon: Clock, variant: "outline" },
-  queued: { label: "Pending", icon: Clock, variant: "outline" },
-  generating: { label: "Generating…", icon: Loader2, variant: "default" },
-  complete: { label: "Complete", icon: CheckCircle2, variant: "secondary" },
-  error: { label: "Error", icon: AlertCircle, variant: "destructive" },
-}
-
-function StatusBadge({ status }: { status: GenerationStatus }) {
-  const { label, icon: Icon, variant } = STATUS_BADGE[status]
-  return (
-    <Badge variant={variant} className="gap-1 whitespace-nowrap">
-      <Icon className={status === "generating" ? "size-3 animate-spin" : "size-3"} />
-      {label}
-    </Badge>
-  )
-}
-
-/** TBL-04/GEN-06: one icon button does double duty — generates on first
+/** TBL-04/GEN-06/GEN-09: a thin wrapper over the shared
+ * useGenerateStopPlay hook + <GenerateStopPlayButton> — generates on first
  * click (no audio yet), auto-plays the result once it lands, and toggles
  * play/pause on subsequent clicks once audio exists. Reuses
- * CharacterCard's play/pause + isPlaying + hidden <audio> pattern.
- *
- * Since 04-03, generateSegment fires-and-returns (202) instead of awaiting
- * a result — this polls `onRefresh` (mirroring ConfigPanel's
- * CharacterPreviewRow) until the row settles out of "generating". A
- * bare-bones Stop button (D-04) appears whenever the row is generating and
- * shows a distinct "Stopping…" state (D-03/D-05) held until a refetch
- * confirms the backend has actually released the row. */
+ * CharacterCard's play/pause + isPlaying + hidden <audio> pattern; the
+ * poll/settle/error state machine (including the "Stopping…" sub-state,
+ * D-03/D-05) now lives in the shared hook instead of being duplicated
+ * here. */
 function GeneratePlayButton({
   segment,
   onRefresh,
@@ -106,28 +67,18 @@ function GeneratePlayButton({
   generationLocked: boolean
 }) {
   const [isPlaying, setIsPlaying] = useState(false)
-  const [isGenerating, setIsGenerating] = useState(false)
-  const [isStopping, setIsStopping] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
   const autoplayRef = useRef(false)
-  // Tracks whether we've actually seen this row hit "generating" (from
-  // either our own trigger or an external one, e.g. a batch run) since the
-  // last settle — the signal a poll/refetch uses to know the row has since
-  // left "generating" for real, rather than reading a stale pre-click
-  // status as "already settled".
-  const hasObservedGeneratingRef = useRef(false)
   const hasAudio = Boolean(segment.audio_path)
-  // T-03-29: a row already 'generating' via a batch (or another trigger)
-  // must disable/spin this button too, not just its own local click flag —
-  // otherwise a second click fires a duplicate POST /segments/{id}/generate.
-  const isRowGenerating = isGenerating || segment.generation_status === "generating"
-  // Only one generation may be in flight app-wide (backend-enforced global
-  // lock) — disable the GENERATE half of this button while something else
-  // holds it. Playback of already-generated audio doesn't touch the GPU,
-  // so it stays enabled regardless (hasAudio already routes handleClick to
-  // the play branch in that case).
-  const isDisabled = isRowGenerating || isStopping || (!hasAudio && generationLocked)
+
+  const { status, error, handleGenerate, handleStop } = useGenerateStopPlay({
+    hasAudio,
+    isExternallyGenerating: segment.generation_status === "generating",
+    poll: true,
+    onGenerate: () => generateSegment(segment.id),
+    onStop: () => cancelSegmentGeneration(segment.id),
+    onRefresh,
+  })
 
   useEffect(() => {
     if (autoplayRef.current && hasAudio && audioRef.current) {
@@ -136,129 +87,43 @@ function GeneratePlayButton({
     }
   }, [hasAudio, segment.audio_path])
 
-  // Poll for the 202+background-task result while we're the one waiting on
-  // a generation we triggered — mirrors CharacterPreviewRow's 1500ms
-  // interval + poll ceiling (WR-04 fix: GENERATION_POLL_CEILING_MS, well
-  // above the backend's own 300s synth timeout) so a legitimately slow
-  // call isn't abandoned mid-poll — only a genuinely failed/hung one is.
-  useEffect(() => {
-    if (!isGenerating) return undefined
-    const interval = setInterval(onRefresh, 1500)
-    const timeout = setTimeout(() => clearInterval(interval), GENERATION_POLL_CEILING_MS)
-    return () => {
-      clearInterval(interval)
-      clearTimeout(timeout)
-    }
-  }, [isGenerating, onRefresh])
-
-  // The row settles (leaves "generating") once a refetch/SSE update lands —
-  // clear both the generating and stopping flags only once we've genuinely
-  // observed the transition, never on the first stale render.
-  useEffect(() => {
-    if (segment.generation_status === "generating") {
-      hasObservedGeneratingRef.current = true
-      return
-    }
-    if (hasObservedGeneratingRef.current) {
-      hasObservedGeneratingRef.current = false
-      setIsGenerating(false)
-      setIsStopping(false)
-    }
-  }, [segment.generation_status])
-
-  async function handleClick() {
-    if (hasAudio) {
-      const audio = audioRef.current
-      if (!audio) return
-      if (isPlaying) {
-        audio.pause()
-      } else {
-        void audio.play()
-      }
-      return
-    }
-    setIsGenerating(true)
-    setError(null)
+  function handleGenerateClick() {
     autoplayRef.current = true
-    try {
-      await generateSegment(segment.id)
-      onRefresh()
-    } catch (err) {
-      setIsGenerating(false)
-      setError(errorMessage(err, "Couldn't start generation."))
-    }
+    void handleGenerate()
   }
 
-  async function handleStop() {
-    setIsStopping(true)
-    setError(null)
-    try {
-      // cancelSegmentGeneration's await only resolves once the backend has
-      // genuinely finished the underlying call and released the lock
-      // (04-03) — that's the confirmed-stopped signal itself, not an
-      // optimistic guess, so clearing local state here is honest per
-      // D-03/D-05.
-      await cancelSegmentGeneration(segment.id)
-    } catch (err) {
-      setError(errorMessage(err, "Couldn't stop generation."))
-    } finally {
-      setIsGenerating(false)
-      setIsStopping(false)
-      onRefresh()
+  function togglePlayback() {
+    const audio = audioRef.current
+    if (!audio) return
+    if (isPlaying) {
+      audio.pause()
+    } else {
+      void audio.play()
     }
   }
-
-  const label = hasAudio
-    ? isPlaying
-      ? `Pause segment ${segment.order + 1}`
-      : `Play segment ${segment.order + 1}`
-    : `Generate audio for segment ${segment.order + 1}`
 
   return (
     <div className="flex flex-col gap-1">
-      <div className="flex items-center gap-1">
-        <Button
-          type="button"
-          size="icon-sm"
-          variant={isPlaying ? "default" : "outline"}
-          disabled={isDisabled}
-          onClick={() => void handleClick()}
-          aria-label={label}
-        >
-          {isRowGenerating ? (
-            <Loader2 className="animate-spin" />
-          ) : hasAudio ? (
-            isPlaying ? (
-              <Pause />
-            ) : (
-              <Play />
-            )
-          ) : (
-            <Play />
-          )}
-        </Button>
-        {isRowGenerating && (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={isStopping}
-            onClick={() => void handleStop()}
-            aria-label={`Stop generating segment ${segment.order + 1}`}
-          >
-            {isStopping ? "Stopping…" : "Stop"}
-          </Button>
-        )}
-        {hasAudio && (
-          <audio
-            ref={audioRef}
-            src={segmentAudioUrl(segment.id)}
-            onPlay={() => setIsPlaying(true)}
-            onPause={() => setIsPlaying(false)}
-            onEnded={() => setIsPlaying(false)}
-          />
-        )}
-      </div>
+      <GenerateStopPlayButton
+        size="sm"
+        status={status}
+        isPlaying={isPlaying}
+        disabled={generationLocked && status === "idle"}
+        disabledReason="Another generation is already running."
+        subjectLabel={`audio for segment ${segment.order + 1}`}
+        onGenerate={handleGenerateClick}
+        onStop={() => void handleStop()}
+        onTogglePlay={togglePlayback}
+      />
+      {hasAudio && (
+        <audio
+          ref={audioRef}
+          src={segmentAudioUrl(segment.id)}
+          onPlay={() => setIsPlaying(true)}
+          onPause={() => setIsPlaying(false)}
+          onEnded={() => setIsPlaying(false)}
+        />
+      )}
       {error && (
         <p className="text-xs text-destructive" role="alert">
           {error}
@@ -484,6 +349,18 @@ export function SegmentTable({
         ),
       }),
       columnHelper.display({
+        id: "voice_instructions",
+        header: "Voice Instructions",
+        cell: ({ row }) => (
+          <EditableTextCell
+            segment={row.original}
+            field="voice_instructions"
+            label="Voice Instructions"
+            onSegmentChange={onSegmentChange}
+          />
+        ),
+      }),
+      columnHelper.display({
         id: "text",
         header: "Text",
         cell: ({ row }) => (
@@ -494,11 +371,6 @@ export function SegmentTable({
             onSegmentChange={onSegmentChange}
           />
         ),
-      }),
-      columnHelper.display({
-        id: "status",
-        header: "Status",
-        cell: ({ row }) => <StatusBadge status={row.original.generation_status} />,
       }),
       columnHelper.display({
         id: "controls",
