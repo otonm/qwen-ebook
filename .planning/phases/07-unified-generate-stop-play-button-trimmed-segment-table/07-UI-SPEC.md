@@ -104,15 +104,28 @@ No warning/amber usage exists elsewhere in the app today (Phase 5's `TriangleAle
 
 ## UI Considerations
 
-Applicable state considerations resolved: 3 covered, 0 backstop, 0 unresolved.
+Probe run (post-verification): 4 elements, 14 applicable state considerations — 14 covered, 0 backstop, 0 unresolved.
 
-| Category | Element(s) | Status | Resolution / Reason |
-|----------|------------|--------|---------------------|
-| long-text | `<GenerateStopPlayButton>` labels (segment row, `ConfigPanel` character row, `CharacterCard` row, batch/Generate All — `interactive-control`) | ✅ covered | Copy is a fixed, short, hardcoded set (`"Generate Preview"` / `"Stop Generation"` / `"Stopping…"` / `"Play"` / `"Pause"`) — never user-generated or dynamic in length, so no truncation/wrap/ellipsis handling is needed; the button auto-sizes to its label via `Button`'s existing intrinsic width (no fixed-width constraint is imposed by this spec) |
-| overflow | `CastWizard.tsx`'s character-card column (`static-content`, D-05 layout fix) | ✅ covered | Adding `items-start` to the outer `flex flex-col gap-8 xl:flex-row xl:gap-8` container (see Component Contracts §4) stops the column stretching to the segment-preview column's height at zero, one, or many characters — each column now sizes to its own content independently, confirmed by inspection of the flex model (default `items-stretch` is what causes today's bug) |
-| error | Joined-output `<audio>` playback (batch site's Ready/Play sub-state, GEN-11 — `media`) | ✅ covered | Reuses the exact hidden-`<audio>` + `isPlaying` toggle + `onPlay`/`onPause`/`onEnded` pattern already proven at the segment and character-preview sites (`GeneratePlayButton`, `CharacterPreviewRow`) — no new playback-failure handling is introduced, same zero-JS-error-path native `<audio>` behavior |
+Elements probed: **E1** `<GenerateStopPlayButton>` (`interactive-control`), **E2** `SegmentTable.tsx` segment table minus Status column (`list-collection`), **E3** joined-output `<audio>` playback at the batch site (`media`), **E4** `CastWizard.tsx` character-card column layout fix (`static-content`).
 
-`SegmentTable.tsx`'s list-collection state coverage (empty/loading/error/populated/partial/zero-one-many) is unchanged by this phase — TBL-05 only removes the Status column; no new list-collection state is introduced, so it is not re-probed here (already resolved in Phase 3's UI-SPEC).
+| Category | Element | Status | Resolution / Truth |
+|----------|---------|--------|---------------------|
+| long-text | E1 button labels | ✅ covered | Copy is a fixed, short, hardcoded set (`"Generate Preview"` / `"Stop Generation"` / `"Stopping…"` / `"Play"` / `"Pause"`) — never user-generated or dynamic in length, so no truncation/wrap/ellipsis handling is needed; the button auto-sizes to its label via `Button`'s existing intrinsic width (no fixed-width constraint is imposed by this spec) |
+| empty | E2 segment table | ✅ covered | Unchanged by this phase — the table's existing zero-segments rendering (resolved in Phase 3's UI-SPEC) is unaffected by removing the Status column |
+| loading | E2 segment table | ✅ covered | Unchanged — segment loading/skeleton behavior from Phase 3 stands; per-row in-flight state is now conveyed by the button's red `Loader2` spin state instead of a Status badge (GEN-12) |
+| error | E2 segment table | ✅ covered | Unchanged — per-row generation errors keep today's `<p className="text-xs text-destructive" role="alert">` paragraph below the button (see Copywriting Contract); table-load errors are Phase 3's resolved contract |
+| populated | E2 segment table | ✅ covered | Happy path is the 4-column layout (`select`, `narrator`, `text`, `controls`) defined in Component Contracts §2 — per-row audio state reads from button color alone (amber = none/stale, green = ready) |
+| partial | E2 segment table | ✅ covered | Mixed generated/ungenerated rows are distinguished solely by per-row button color (amber vs green), per GEN-12's single-source-of-truth mandate — no Status column needed to read partial progress |
+| overflow | E2 segment table | ✅ covered | Column removal only *reduces* width pressure; the text column's existing wrap behavior and the table's existing horizontal behavior (Phase 3) are untouched |
+| zero-one-many | E2 segment table | ✅ covered | Unchanged from Phase 3's resolved contract — this phase adds/removes no row-level layout that varies with item count |
+| empty | E3 joined-output audio | ✅ covered | Absent media is impossible by construction: the batch button only enters `ready` (Play) when `hasOutput` is true (the boolean already computed in `ConfigPanel.tsx`); with no output the button is amber `"Generate Preview"` |
+| loading | E3 joined-output audio | ✅ covered | While the batch generation/join is in flight the button is red `"Stop Generation"` with `Loader2` spin, and the existing `Progress` block below it stays exactly as-is (Component Contracts §3) |
+| error | E3 joined-output audio | ✅ covered | Reuses the exact hidden-`<audio>` + `isPlaying` toggle + `onPlay`/`onPause`/`onEnded` pattern already proven at the segment and character-preview sites (`GeneratePlayButton`, `CharacterPreviewRow`); batch errors keep the existing `batchError` surface, unchanged |
+| populated | E3 joined-output audio | ✅ covered | Happy path: green `"Play"`/`"Pause"` toggle on the batch button drives the hidden `<audio src={outputUrl(project.id)}>` element (Component Contracts §3) |
+| overflow | E4 CastWizard card column | ✅ covered | Adding `xl:items-start` to the outer flex container (Component Contracts §4) stops the column stretching to the segment-preview column's height at zero, one, or many characters — each column sizes to its own content independently (default `items-stretch` is today's bug) |
+| long-text | E4 CastWizard card column | ✅ covered | Card content (names, voice instructions) wraps inside the fixed `xl:w-[420px]` column exactly as today — D-02 forbids reshaping `CharacterCard`'s internals, and the one-class layout fix does not alter any text container |
+
+Empty-state and error-state *copy* lives in `## Copywriting Contract` above — this section covers shape-rooted state coverage and references those rows rather than restating them.
 
 ---
 
