@@ -525,15 +525,26 @@ async def patch_project_config(project_id: str, patch: ProjectConfigPatch) -> di
             status_code=422, detail=f"unknown output_format {patch.output_format!r}"
         )
 
+    old_output_path: str | None = None
     with Session(engine) as session:
         project = session.get(Project, project_id)
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
 
+        if patch.output_format is not None and patch.output_format != project.output_format:
+            # WR-01: output_path was encoded with the *previous* format —
+            # invalidate it (mirrors patch_segment's invalidate-on-edit
+            # pattern) so Download disables until the (cache-hit) re-join
+            # instead of serving mislabeled bytes under the new extension.
+            old_output_path = project.output_path
+            project.output_path = None
         if patch.output_format is not None:
             project.output_format = patch.output_format
         if patch.output_filename is not None:
-            project.output_filename = sanitize_filename(patch.output_filename)
+            # WR-03: normalize a fully-sanitized-away name to NULL so the
+            # client's `??` fallback (and the server's own falsy check)
+            # agree — "" is not nullish and would defeat both fallbacks.
+            project.output_filename = sanitize_filename(patch.output_filename) or None
 
         session.add(project)
         session.commit()
@@ -545,7 +556,14 @@ async def patch_project_config(project_id: str, patch: ProjectConfigPatch) -> di
         segments = list(
             session.exec(select(Segment).where(Segment.project_id == project_id)).all()
         )
-        return _serialize_project(project, characters, segments)
+        result = _serialize_project(project, characters, segments)
+
+    if old_output_path:
+        # Mirrors patch_segment's post-commit unlink pattern — the
+        # invalidated file must not leak on disk.
+        Path(old_output_path).unlink(missing_ok=True)
+
+    return result
 
 
 @app.get("/projects/{project_id}/download")

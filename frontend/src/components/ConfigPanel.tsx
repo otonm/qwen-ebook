@@ -264,12 +264,15 @@ export function ConfigPanel({
   // fallback in v1.
   const joinBlocked = generation.status === "error" && failedCount > 0
   const hasOutput = Boolean(project.output_path)
-  // D-05: the anchor's download attribute must mirror the server's derived
-  // stem exactly (sanitized output_filename, or the source filename's stem)
-  // — a literal "output" fallback would make the browser save output.mp3
-  // instead of book.mp3 since same-origin browsers honor this over
-  // Content-Disposition.
-  const downloadFilename = `${project.output_filename ?? project.filename.replace(/\.[^.]+$/, "")}.${project.output_format}`
+  // D-05/WR-03: the anchor's download attribute must mirror the server's
+  // full fallback chain exactly — sanitized output_filename, else the
+  // source filename's stem, else "output" — since same-origin browsers
+  // honor this attribute over Content-Disposition. `||` (not `??`) is
+  // required: the server normalizes a fully-sanitized-away name to NULL,
+  // but stays defensive here in case output_filename is ever "".
+  const downloadStem =
+    project.output_filename || project.filename.replace(/\.[^.]+$/, "") || "output"
+  const downloadFilename = `${downloadStem}.${project.output_format}`
 
   const progressPercent =
     generation.overall && generation.overall.total > 0
