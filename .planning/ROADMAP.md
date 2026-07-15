@@ -106,7 +106,7 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
   3. Once the joined file is ready, user can click a blue "Download" button to save it under the chosen filename
   4. The downloaded file matches the selected format (correct extension, content type, and audio codec)
 
-**Plans**: 1/3 plans executed
+**Plans**: 2/3 plans executed
 **UI hint**: yes
 
 **Wave 1**
@@ -115,7 +115,7 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
 
 **Wave 2** *(blocked on Wave 1)*
 
-- [ ] 06-02-PLAN.md — frontend: editable Output Format Select, Output Filename Input + extension suffix, blue Download button wired to the new endpoints
+- [x] 06-02-PLAN.md — frontend: editable Output Format Select, Output Filename Input + extension suffix, blue Download button wired to the new endpoints
 
 **Wave 3** *(blocked on Wave 2)*
 
@@ -146,5 +146,5 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
 | 3. Editable Table, Full Generation Pipeline, Persistence & Deployment | v1.0 | 9/9 | Complete | 2026-07-12 |
 | 4. Immediate Cancellation | v1.1 | 4/4 | Complete    | 2026-07-14 |
 | 5. On-Demand Model Swap | v1.1 | 3/3 | Complete    | 2026-07-14 |
-| 6. Config Panel — Output Format, Filename & Download | v1.1 | 1/3 | In Progress|  |
+| 6. Config Panel — Output Format, Filename & Download | v1.1 | 2/3 | In Progress|  |
 | 7. Unified Generate/Stop/Play Button & Trimmed Segment Table | v1.1 | 0/TBD | Not started | - |
