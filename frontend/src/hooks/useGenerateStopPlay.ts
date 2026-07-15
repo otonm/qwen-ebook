@@ -48,6 +48,18 @@ export function useGenerateStopPlay({
   // SegmentTable.tsx's GeneratePlayButton / ConfigPanel.tsx's
   // CharacterPreviewRow.
   const hasObservedGeneratingRef = useRef(false)
+  // WR-01 fix: snapshot of `hasAudio` at the moment handleGenerate fires.
+  // The settle effect below used to infer "still generating" from the bare
+  // `isGenerating && !hasAudio` condition, which silently assumed
+  // handleGenerate is only ever called while hasAudio is false — an
+  // invariant enforced only by GenerateStopPlayButton's click-gating
+  // (status === "idle"), not by this hook. Comparing against the snapshot
+  // instead of a hardcoded `false` makes the hook self-sufficient: any
+  // future caller that invokes handleGenerate while hasAudio is already
+  // true still gets a real "still generating" signal (hasAudio hasn't
+  // changed from its start value yet) instead of never observing a
+  // generating state at all.
+  const hadAudioAtGenerateStartRef = useRef(hasAudio)
   const isRowGenerating = isGenerating || isExternallyGenerating
 
   // Poll for the 202+background-task result while we're the one waiting on
@@ -80,17 +92,19 @@ export function useGenerateStopPlay({
   // e.g. segment.generation_status) OR, for sites with no such signal —
   // character previews (CharacterPreviewRow/CharacterCard) always pass
   // isExternallyGenerating: false — via this hook's own isGenerating still
-  // being true while hasAudio hasn't caught up yet. Bug fix (07-05
-  // checkpoint): before this, character-preview sites never observed any
-  // transition at all, so isGenerating was never cleared once the poll's
-  // onRefresh picked up the finished preview — the button stayed stuck on
-  // the red spinner forever even though hasAudio had gone true. Folding
-  // the self-triggered case into this ref-guarded branch (rather than a
-  // second effect keyed directly off hasAudio) keeps the "settle" write
-  // gated on a genuinely-observed prior generating state, not a bare
-  // prop-derived setState.
+  // being true while hasAudio hasn't moved from its value at generate-start
+  // (hadAudioAtGenerateStartRef, WR-01 fix — see the ref's own comment for
+  // why comparing against the snapshot rather than a hardcoded `false`
+  // matters). Bug fix (07-05 checkpoint): before this, character-preview
+  // sites never observed any transition at all, so isGenerating was never
+  // cleared once the poll's onRefresh picked up the finished preview — the
+  // button stayed stuck on the red spinner forever even though hasAudio had
+  // gone true. Folding the self-triggered case into this ref-guarded branch
+  // (rather than a second effect keyed directly off hasAudio) keeps the
+  // "settle" write gated on a genuinely-observed prior generating state,
+  // not a bare prop-derived setState.
   useEffect(() => {
-    if (isExternallyGenerating || (isGenerating && !hasAudio)) {
+    if (isExternallyGenerating || (isGenerating && hasAudio === hadAudioAtGenerateStartRef.current)) {
       hasObservedGeneratingRef.current = true
       return
     }
@@ -102,6 +116,7 @@ export function useGenerateStopPlay({
   }, [isExternallyGenerating, isGenerating, hasAudio])
 
   async function handleGenerate() {
+    hadAudioAtGenerateStartRef.current = hasAudio
     setIsGenerating(true)
     setError(null)
     try {
