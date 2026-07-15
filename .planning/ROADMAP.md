@@ -134,7 +134,7 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
   4. Editing a segment's or character's text, voice instructions, or narrator immediately reverts its control back to yellow, with no separate status badge anywhere in the UI
   5. The segment table shows exactly 3 editable columns (Narrator, Voice Instructions, Text) — the Status badge column is gone
 
-**Plans**: 1/5 plans executed
+**Plans**: 4/5 plans executed
 **UI hint**: yes
 
 **Wave 1**
@@ -143,9 +143,9 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
 
 **Wave 2** *(parallel — disjoint files)*
 
-- [ ] 07-02-PLAN.md — SegmentTable: swap in unified button, delete Status column/badge code + dead imports (GEN-09, TBL-05, D-07)
-- [ ] 07-03-PLAN.md — ConfigPanel: unify character-preview row + batch Generate All, joined-output green Play with Pitfall-2 precedence, Download unchanged (GEN-10, GEN-11, D-04)
-- [ ] 07-04-PLAN.md — CharacterCard gains real Stop via shared button + CastWizard xl:items-start layout fix; SegmentPreview untouched (GEN-10, D-01/D-02/D-05)
+- [x] 07-02-PLAN.md — SegmentTable: swap in unified button, delete Status column/badge code + dead imports (GEN-09, TBL-05, D-07)
+- [x] 07-03-PLAN.md — ConfigPanel: unify character-preview row + batch Generate All, joined-output green Play with Pitfall-2 precedence, Download unchanged (GEN-10, GEN-11, D-04)
+- [x] 07-04-PLAN.md — CharacterCard gains real Stop via shared button + CastWizard xl:items-start layout fix; SegmentPreview untouched (GEN-10, D-01/D-02/D-05)
 
 **Wave 3** *(blocked on Wave 2)*
 
@@ -161,4 +161,4 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
 | 4. Immediate Cancellation | v1.1 | 4/4 | Complete    | 2026-07-14 |
 | 5. On-Demand Model Swap | v1.1 | 3/3 | Complete    | 2026-07-14 |
 | 6. Config Panel — Output Format, Filename & Download | v1.1 | 3/3 | Complete    | 2026-07-15 |
-| 7. Unified Generate/Stop/Play Button & Trimmed Segment Table | v1.1 | 1/5 | In Progress|  |
+| 7. Unified Generate/Stop/Play Button & Trimmed Segment Table | v1.1 | 4/5 | In Progress|  |
