@@ -33,14 +33,6 @@ def _env_int(name: str, default: int) -> int:
     return int(raw)
 
 
-# WR-04: the only two formats main.py/audio_join.py actually branch on
-# ("wav" gets a stream copy + audio/wav; anything else is treated as mp3 —
-# libmp3lame + audio/mpeg). Any other value (a typo, a future "flac") would
-# silently produce a codec/container/Content-Type mismatch, so fail fast at
-# settings-load time instead of at request time deep inside ffmpeg.
-_ALLOWED_OUTPUT_FORMATS = {"wav", "mp3"}
-
-
 _DEFAULT_DATABASE_URL = f"sqlite:///{_REPO_ROOT / 'backend' / 'projects.db'}"
 
 
@@ -51,7 +43,6 @@ class Settings:
     TTS_DEFAULT_SPEAKER: str
     CHUNK_TARGET_LEN: int
     MAX_UPLOAD_BYTES: int
-    OUTPUT_FORMAT: str
     UPLOAD_DIR: str
     OUTPUT_DIR: str
     PREVIEW_DIR: str
@@ -65,13 +56,6 @@ class Settings:
 
 
 def load_settings() -> Settings:
-    output_format = os.environ.get("OUTPUT_FORMAT", "wav")
-    if output_format not in _ALLOWED_OUTPUT_FORMATS:
-        raise ValueError(
-            f"OUTPUT_FORMAT={output_format!r} is not supported; "
-            f"must be one of {sorted(_ALLOWED_OUTPUT_FORMATS)}"
-        )
-
     output_dir = os.environ.get("OUTPUT_DIR", _DEFAULT_OUTPUT_DIR)
 
     return Settings(
@@ -80,7 +64,6 @@ def load_settings() -> Settings:
         TTS_DEFAULT_SPEAKER=os.environ.get("TTS_DEFAULT_SPEAKER", ""),
         CHUNK_TARGET_LEN=_env_int("CHUNK_TARGET_LEN", 800),
         MAX_UPLOAD_BYTES=_env_int("MAX_UPLOAD_BYTES", 10 * 1024 * 1024),
-        OUTPUT_FORMAT=output_format,
         UPLOAD_DIR=os.environ.get("UPLOAD_DIR", _DEFAULT_UPLOAD_DIR),
         OUTPUT_DIR=output_dir,
         PREVIEW_DIR=os.environ.get("PREVIEW_DIR", f"{output_dir}/previews"),

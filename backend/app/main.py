@@ -24,13 +24,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import uuid
 from collections.abc import AsyncIterable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -39,6 +40,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app import tts_client
 from app.analysis_worker import has_pending_queue, progress_events, run_analysis
+from app.audio_join import CODEC_TABLE
 from app.cache_key import compute_cache_key
 from app.config import settings
 from app.db import engine, init_db
@@ -248,10 +250,13 @@ def _serialize_project(
         "status": project.status,
         "error_detail": project.error_detail,
         # CFG-01: the joined batch-generation output (plan 03-03) and the
-        # server's fixed output format/codec choice — both needed by the
-        # config panel, neither previously exposed over the API.
+        # per-project output format/codec choice — both needed by the
+        # config panel. Phase 6 (CFG-06/CFG-07): output_format/output_filename
+        # are per-project DB columns, read live — the old global setting is
+        # fully retired.
         "output_path": project.output_path,
-        "output_format": settings.OUTPUT_FORMAT,
+        "output_format": project.output_format,
+        "output_filename": project.output_filename,
         # Phase 5 (CFG-04): drives the Config Panel's model dropdown and
         # the 0.6B disabled-Voice-Instructions-cell state (D-04).
         "tts_model": project.tts_model,
@@ -484,6 +489,98 @@ async def set_project_model(project_id: str, body: SetModelRequest) -> dict:
         return result
     finally:
         release_generation()
+
+
+# Phase 6 (CFG-07/D-04): true path/drive separators (/, \, :) keep only the
+# rightmost segment (an attacker-supplied "a/b:name" must reduce to the
+# real leaf name, not a mangled concatenation of path segments) — the
+# remaining illegal filesystem/control chars are just deleted, then any
+# user-typed extension is dropped (Open Question 2 — the extension is
+# always derived from output_format, never the user's own). Result may be
+# empty; callers fall back to a sensible default (D-05).
+_PATH_SEPARATORS = ("/", "\\", ":")
+_ILLEGAL_FILENAME_CHARS = re.compile(r'[\x00-\x1f*?|"<>]')
+
+
+def sanitize_filename(name: str) -> str:
+    candidate = name
+    for sep in _PATH_SEPARATORS:
+        if sep in candidate:
+            candidate = candidate.rsplit(sep, 1)[-1]
+    candidate = _ILLEGAL_FILENAME_CHARS.sub("", candidate).strip()
+    return Path(candidate).stem
+
+
+class ProjectConfigPatch(BaseModel):
+    output_format: str | None = None
+    output_filename: str | None = None
+
+
+@app.patch("/projects/{project_id}")
+async def patch_project_config(project_id: str, patch: ProjectConfigPatch) -> dict:
+    """CFG-06/CFG-07: persist the project's output format and/or display
+    filename. Mirrors patch_character's optional-field PATCH shape — unlike
+    set_project_model, this never touches the GPU, so no
+    try_claim_generation lock is claimed (RESEARCH Pattern 4)."""
+    if patch.output_format is not None and patch.output_format not in CODEC_TABLE:
+        raise HTTPException(
+            status_code=422, detail=f"unknown output_format {patch.output_format!r}"
+        )
+
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        if patch.output_format is not None:
+            project.output_format = patch.output_format
+        if patch.output_filename is not None:
+            project.output_filename = sanitize_filename(patch.output_filename)
+
+        session.add(project)
+        session.commit()
+        session.refresh(project)
+
+        characters = list(
+            session.exec(select(Character).where(Character.project_id == project_id)).all()
+        )
+        segments = list(
+            session.exec(select(Segment).where(Segment.project_id == project_id)).all()
+        )
+        return _serialize_project(project, characters, segments)
+
+
+@app.get("/projects/{project_id}/download")
+async def download_project(project_id: str) -> FileResponse:
+    """CFG-08: serve the joined output file with the correct Content-Type
+    and a Content-Disposition filename built from the sanitized
+    output_filename (or the upload filename's stem as a fallback, D-05)
+    plus the correct extension for the current format — always via
+    FileResponse's filename= kwarg, never a hand-formatted header
+    (T-06-02)."""
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        if not project.output_path or not Path(project.output_path).is_file():
+            raise HTTPException(status_code=409, detail="Output not ready")
+
+        fmt = project.output_format
+        stem = (
+            sanitize_filename(project.output_filename)
+            if project.output_filename
+            else Path(project.filename).stem
+        )
+        if not stem:
+            stem = "output"
+        display_name = f"{stem}.{fmt}"
+        output_path = project.output_path
+
+    return FileResponse(
+        output_path,
+        media_type=CODEC_TABLE[fmt]["content_type"],
+        filename=display_name,
+    )
 
 
 async def _require_project_exists(project_id: str) -> None:
