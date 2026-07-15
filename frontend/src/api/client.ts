@@ -320,3 +320,11 @@ export async function patchProjectConfig(
 export function downloadUrl(projectId: string): string {
   return `/projects/${projectId}/download`
 }
+
+/** GEN-11: same route as downloadUrl, used as the `src` for a hidden
+ * <audio> element that backs the batch site's green "Play" state once the
+ * joined output exists — no new backend endpoint, FileResponse already
+ * supports Range requests for seeking. */
+export function outputUrl(projectId: string): string {
+  return `/projects/${projectId}/download`
+}
