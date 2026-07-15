@@ -1,10 +1,11 @@
 ---
 phase: 6
 slug: config-panel-output-format-filename-download
-status: draft
+status: approved
 shadcn_initialized: true
 preset: style=radix-nova, baseColor=zinc, cssVariables=true, iconLibrary=lucide
 created: 2026-07-15
+reviewed_at: 2026-07-15
 ---
 
 # Phase 6 — UI Design Contract
