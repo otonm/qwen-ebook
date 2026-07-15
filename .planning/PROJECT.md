@@ -40,9 +40,11 @@ Given a long text, produce a natural-sounding, multi-character narrated audio fi
 
 - [x] User can choose the output audio format (FLAC, MP3, or Opus — WAV dropped), set a custom output filename, and download the finished joined file via a blue Download button in the Config Panel — Validated in Phase 6 (CFG-06/07/08): per-project `output_format`/`output_filename` columns, 3-way ffmpeg codec dispatch, `PATCH /projects/{id}` + `GET /projects/{id}/download` routes, human-verified end-to-end on the deploy target (all three formats download and play; filename sanitizer amended during UAT to replace path separators with underscores, commit 3f49822)
 
+- [x] Every place audio is generated (segment row, character preview, Generate All batch) uses one consistent yellow "Generate Preview" → red "Stop Generation" → green "Play" button, and the segment table shows exactly 3 editable columns (Narrator / Voice Instructions / Text) with the separate Status badge column removed — Validated in Phase 7 (GEN-09/10/11/12, TBL-05): shared `useGenerateStopPlay` hook + `GenerateStopPlayButton` component replacing 4 hand-rolled implementations, joined-output in-browser Play, edit-invalidation reverts the button to yellow, human-verified end-to-end on the deploy target (3 bugs found and fixed during UAT: dev-proxy 404 on `/segments`, character buttons never settling to green, batch button mislabeled — commits 9e2fe56/09d01f7/e4ba4d0)
+
 ### Active
 
-- [ ] v1.1 Generation UX & Config Rework — see Current Milestone above; REQ-IDs pending REQUIREMENTS.md
+- (none — v1.1 milestone complete as of Phase 7; all 13 v1.1 requirements validated)
 
 ### Out of Scope
 
@@ -103,4 +105,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-15 after Phase 6 (Config Panel — Output Format, Filename & Download) completion*
+*Last updated: 2026-07-15 after Phase 7 (Unified Generate/Stop/Play Button & Trimmed Segment Table) completion — v1.1 milestone complete*
