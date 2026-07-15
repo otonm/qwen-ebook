@@ -1,7 +1,8 @@
-import { Loader2, Merge as MergeIcon, Pause, Play } from "lucide-react"
+import { Merge as MergeIcon } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 
 import {
+  cancelCharacterPreview,
   mergeCharacter,
   patchCharacter,
   previewUrl,
@@ -29,6 +30,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import { GenerateStopPlayButton } from "@/components/GenerateStopPlayButton"
+import { useGenerateStopPlay } from "@/hooks/useGenerateStopPlay"
 
 // Radix Select forbids an empty-string item value — the backend's "auto"
 // preset uses "" server-side, so map it to this sentinel client-side only.
@@ -56,36 +59,31 @@ export function CharacterCard({
     character.voice_instructions
   )
   const [isPlaying, setIsPlaying] = useState(false)
-  const [isGenerating, setIsGenerating] = useState(false)
   const [mergeTargetId, setMergeTargetId] = useState<string | null>(null)
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false)
   const audioRef = useRef<HTMLAudioElement>(null)
   const hasPreview = Boolean(character.preview_audio_path)
-  const isWaitingForPreview = isGenerating && !hasPreview
 
-  // The preview trigger is fire-and-forget — the server generates in the
-  // background, and real GPU synthesis can run well past a few seconds
-  // (a cold/idle GPU downclock-recovery latency spike is a documented
-  // issue in this codebase, tts_service/model.py's keepalive_matmul; a
-  // fresh TTS container's very first request measured ~38s in production).
-  // A short fixed burst of refetches isn't reliable, so poll steadily for
-  // as long as we're actually waiting: this effect re-runs whenever
-  // isWaitingForPreview changes, and React's own cleanup clears the
-  // interval/ceiling the instant hasPreview flips true — no extra state
-  // needed to "turn off" polling.
-  // ponytail: 60s ceiling only guards a silent server-side failure
-  // (_generate_preview logs and returns without ever setting
-  // preview_audio_path) — bump further if cold-start latency ever grows
-  // past this in practice.
-  useEffect(() => {
-    if (!isWaitingForPreview) return undefined
-    const interval = window.setInterval(onCastRefresh, 1500)
-    const ceiling = window.setTimeout(() => setIsGenerating(false), 60000)
-    return () => {
-      window.clearInterval(interval)
-      window.clearTimeout(ceiling)
-    }
-  }, [isWaitingForPreview, onCastRefresh])
+  // D-01: this card's preview control had no Stop before — the shared hook
+  // owns the generate/stop/poll/settle state machine (GENERATION_POLL_CEILING_MS
+  // ceiling, not this card's own 60s value) that CharacterCard used to hand-roll.
+  // No external "is previewing" signal exists for a character (unlike a
+  // segment's server-side generation_status) — this card's own trigger is
+  // the only source of "generating" for it, so isExternallyGenerating is
+  // always false here.
+  const {
+    status: previewStatus,
+    error: previewError,
+    handleGenerate: handleGeneratePreview,
+    handleStop: handleStopPreview,
+  } = useGenerateStopPlay({
+    hasAudio: hasPreview,
+    isExternallyGenerating: false,
+    poll: true,
+    onGenerate: () => triggerCharacterPreview(character.id),
+    onStop: () => cancelCharacterPreview(character.id),
+    onRefresh: onCastRefresh,
+  })
 
   // Keep local edit buffers aligned when the underlying character record
   // changes for a reason other than this card's own edits (merge, initial
@@ -126,16 +124,6 @@ export function CharacterCard({
       audio.pause()
     } else {
       void audio.play()
-    }
-  }
-
-  async function handleGenerate() {
-    setIsGenerating(true)
-    try {
-      await triggerCharacterPreview(character.id)
-      onCastRefresh()
-    } catch {
-      setIsGenerating(false)
     }
   }
 
@@ -206,61 +194,49 @@ export function CharacterCard({
         />
       </div>
 
-      <div className="flex items-center gap-2">
-        {hasPreview ? (
-          <Button
-            type="button"
-            size="icon"
-            variant={isPlaying ? "default" : "outline"}
-            onClick={togglePlayback}
-            aria-label={
-              isPlaying
-                ? `Pause preview for ${character.name}`
-                : `Play preview for ${character.name}`
-            }
-          >
-            {isPlaying ? <Pause /> : <Play />}
-          </Button>
-        ) : (
-          <Button
-            type="button"
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center gap-2">
+          <GenerateStopPlayButton
             size="sm"
-            variant="outline"
-            disabled={isGenerating || generationLocked}
-            onClick={() => void handleGenerate()}
-            aria-label={`Generate voice preview for ${character.name}`}
-          >
-            {isGenerating ? (
-              <Loader2 className="animate-spin" />
-            ) : (
-              "Generate"
-            )}
-          </Button>
-        )}
-        {hasPreview && (
-          <Badge className="bg-primary text-primary-foreground">Voice assigned</Badge>
-        )}
-        {hasPreview && (
-          <audio
-            ref={audioRef}
-            src={previewUrl(character.id)}
-            onPlay={() => setIsPlaying(true)}
-            onPause={() => setIsPlaying(false)}
-            onEnded={() => setIsPlaying(false)}
+            status={previewStatus}
+            isPlaying={isPlaying}
+            disabled={generationLocked && previewStatus === "idle"}
+            disabledReason="Another generation is already running."
+            subjectLabel={`preview for ${character.name}`}
+            onGenerate={handleGeneratePreview}
+            onStop={handleStopPreview}
+            onTogglePlay={togglePlayback}
           />
-        )}
+          {hasPreview && (
+            <Badge className="bg-primary text-primary-foreground">Voice assigned</Badge>
+          )}
+          {hasPreview && (
+            <audio
+              ref={audioRef}
+              src={previewUrl(character.id)}
+              onPlay={() => setIsPlaying(true)}
+              onPause={() => setIsPlaying(false)}
+              onEnded={() => setIsPlaying(false)}
+            />
+          )}
 
-        {otherCharacters.length > 0 && (
-          <Button
-            type="button"
-            size="icon"
-            variant="outline"
-            className="ml-auto"
-            onClick={() => setMergeDialogOpen(true)}
-            aria-label={`Merge ${character.name} into another character`}
-          >
-            <MergeIcon />
-          </Button>
+          {otherCharacters.length > 0 && (
+            <Button
+              type="button"
+              size="icon"
+              variant="outline"
+              className="ml-auto"
+              onClick={() => setMergeDialogOpen(true)}
+              aria-label={`Merge ${character.name} into another character`}
+            >
+              <MergeIcon />
+            </Button>
+          )}
+        </div>
+        {previewError && (
+          <p className="text-xs text-destructive" role="alert">
+            {previewError}
+          </p>
         )}
       </div>
 

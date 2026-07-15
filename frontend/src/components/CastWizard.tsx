@@ -105,7 +105,7 @@ export function CastWizard({ projectId, initialCast, initialSegments }: CastWiza
         </div>
       )}
 
-      <div className="flex flex-col gap-8 xl:flex-row xl:gap-8">
+      <div className="flex flex-col gap-8 xl:flex-row xl:items-start xl:gap-8">
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 xl:w-[420px] xl:flex-none xl:grid-cols-1">
           {cast.map((character) => (
             <CharacterCard
