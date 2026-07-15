@@ -491,22 +491,20 @@ async def set_project_model(project_id: str, body: SetModelRequest) -> dict:
         release_generation()
 
 
-# Phase 6 (CFG-07/D-04): true path/drive separators (/, \, :) keep only the
-# rightmost segment (an attacker-supplied "a/b:name" must reduce to the
-# real leaf name, not a mangled concatenation of path segments) — the
-# remaining illegal filesystem/control chars are just deleted, then any
+# Phase 6 (CFG-07/D-04): path/drive separators (/, \, :) become underscores
+# (UAT decision: "my/test:book" -> "my_test_book" — keep every segment
+# visible rather than reducing to the leaf name; safe because the download
+# path is never derived from output_filename, only the display name is) —
+# the remaining illegal filesystem/control chars are just deleted, then any
 # user-typed extension is dropped (Open Question 2 — the extension is
 # always derived from output_format, never the user's own). Result may be
 # empty; callers fall back to a sensible default (D-05).
-_PATH_SEPARATORS = ("/", "\\", ":")
+_PATH_SEPARATORS = re.compile(r"[/\\:]")
 _ILLEGAL_FILENAME_CHARS = re.compile(r'[\x00-\x1f*?|"<>]')
 
 
 def sanitize_filename(name: str) -> str:
-    candidate = name
-    for sep in _PATH_SEPARATORS:
-        if sep in candidate:
-            candidate = candidate.rsplit(sep, 1)[-1]
+    candidate = _PATH_SEPARATORS.sub("_", name)
     candidate = _ILLEGAL_FILENAME_CHARS.sub("", candidate).strip()
     return Path(candidate).stem
 

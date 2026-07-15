@@ -73,7 +73,7 @@ def test_patch_output_filename_strips_illegal_chars_and_extension():
     )
 
     assert response.status_code == 200
-    assert response.json()["output_filename"] == "mybook"
+    assert response.json()["output_filename"] == "a_b_mybook"
 
 
 def test_download_returns_409_when_output_not_ready():
