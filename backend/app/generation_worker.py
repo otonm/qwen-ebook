@@ -216,13 +216,24 @@ async def _join_project(project_id: str) -> None:
     if missing:
         raise RuntimeError(f"{len(missing)} segment(s) failed to generate — join blocked")
 
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        if project is None:
+            raise RuntimeError(f"project {project_id} not found — join blocked")
+        fmt = project.output_format
+        # D-07: only the latest output persists on disk — delete the
+        # previous joined file before writing the new one.
+        if project.output_path and Path(project.output_path).is_file():
+            logger.info(f"project {project_id}: deleting previous output {project.output_path}")
+            Path(project.output_path).unlink(missing_ok=True)
+
     wav_paths = [s.audio_path for s in segments if s.audio_path is not None]
     out_dir = Path(settings.OUTPUT_DIR)
     out_dir.mkdir(parents=True, exist_ok=True)
     # Server-generated uuid filename — never derived from any client string
-    # (T-03-06).
-    out_path = str(out_dir / f"{uuid.uuid4().hex}.{settings.OUTPUT_FORMAT}")
-    await run_in_threadpool(join_wavs, wav_paths, out_path, settings.OUTPUT_FORMAT)
+    # (T-03-06); output_filename is display-only, applied at download time.
+    out_path = str(out_dir / f"{uuid.uuid4().hex}.{fmt}")
+    await run_in_threadpool(join_wavs, wav_paths, out_path, fmt)
 
     with Session(engine) as session:
         project = session.get(Project, project_id)
