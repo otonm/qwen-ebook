@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 
 import {
+  errorMessage,
   getVoices,
   undoMergeCharacter,
   type Character,
@@ -39,6 +40,11 @@ export function CastWizard({ projectId, initialCast, initialSegments }: CastWiza
   // Only the most recent merge can be undone — a new merge (or an
   // explicit dismiss) replaces/clears this, see undo-merge's ponytail note.
   const [pendingUndo, setPendingUndo] = useState<MergeUndoSnapshot | null>(null)
+  // WR-03: refetch()/handleUndoMerge() used to have no .catch — a failed
+  // request silently did nothing beyond an unhandled promise rejection in
+  // the console, inconsistent with the role="alert" pattern used elsewhere
+  // in this phase.
+  const [castError, setCastError] = useState<string | null>(null)
   // WR-06: track pending REFRESH_DELAYS_MS timeout ids so they can be
   // cleared on unmount — otherwise a scheduled refetch() still fires and
   // calls setCast/setSegments after the component (e.g. user navigated
@@ -58,10 +64,12 @@ export function CastWizard({ projectId, initialCast, initialSegments }: CastWiza
   }, [])
 
   const refetch = useCallback(() => {
-    refreshProject(projectId).then(({ cast: nextCast, segments: nextSegments }) => {
-      setCast(nextCast)
-      setSegments(nextSegments)
-    })
+    refreshProject(projectId)
+      .then(({ cast: nextCast, segments: nextSegments }) => {
+        setCast(nextCast)
+        setSegments(nextSegments)
+      })
+      .catch((err: unknown) => setCastError(errorMessage(err, "Couldn't refresh cast.")))
   }, [projectId])
 
   const handleCastRefresh = useCallback(() => {
@@ -81,15 +89,24 @@ export function CastWizard({ projectId, initialCast, initialSegments }: CastWiza
 
   function handleUndoMerge() {
     if (!pendingUndo) return
-    void undoMergeCharacter(pendingUndo).then(() => {
-      setPendingUndo(null)
-      handleCastRefresh()
-    })
+    setCastError(null)
+    void undoMergeCharacter(pendingUndo)
+      .then(() => {
+        setPendingUndo(null)
+        handleCastRefresh()
+      })
+      .catch((err: unknown) => setCastError(errorMessage(err, "Couldn't undo merge.")))
   }
 
   return (
     <div className="mx-auto flex max-w-[1600px] flex-col gap-12 p-6">
       <h1 className="text-2xl font-semibold">Review Cast</h1>
+
+      {castError && (
+        <p className="text-xs text-destructive" role="alert">
+          {castError}
+        </p>
+      )}
 
       {pendingUndo && (
         <div className="flex items-center justify-between gap-4 rounded-lg bg-secondary p-3 text-sm">

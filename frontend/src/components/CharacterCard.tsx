@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react"
 
 import {
   cancelCharacterPreview,
+  errorMessage,
   mergeCharacter,
   patchCharacter,
   previewUrl,
@@ -61,6 +62,11 @@ export function CharacterCard({
   const [isPlaying, setIsPlaying] = useState(false)
   const [mergeTargetId, setMergeTargetId] = useState<string | null>(null)
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false)
+  // WR-03: saveField()/confirmMerge() used to have no try/catch — a failed
+  // PATCH/merge silently left the user believing their edit/merge went
+  // through, inconsistent with the role="alert" pattern used elsewhere.
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [mergeError, setMergeError] = useState<string | null>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
   const hasPreview = Boolean(character.preview_audio_path)
 
@@ -98,8 +104,13 @@ export function CharacterCard({
   }, [character.id, character.name, character.voice_instructions])
 
   async function saveField(patch: Parameters<typeof patchCharacter>[1]) {
-    await patchCharacter(character.id, patch)
-    onCastRefresh()
+    try {
+      await patchCharacter(character.id, patch)
+      setSaveError(null)
+      onCastRefresh()
+    } catch (err) {
+      setSaveError(errorMessage(err, "Couldn't save changes."))
+    }
   }
 
   function handleNameBlur() {
@@ -129,15 +140,23 @@ export function CharacterCard({
 
   async function confirmMerge() {
     if (!mergeTargetId) return
-    const { undo } = await mergeCharacter(character.id, mergeTargetId)
-    setMergeDialogOpen(false)
-    setMergeTargetId(null)
-    onMerged(undo)
+    setMergeError(null)
+    try {
+      const { undo } = await mergeCharacter(character.id, mergeTargetId)
+      setMergeDialogOpen(false)
+      setMergeTargetId(null)
+      onMerged(undo)
+    } catch (err) {
+      setMergeError(errorMessage(err, "Couldn't merge characters."))
+    }
   }
 
   function closeMergeDialog(open: boolean) {
     setMergeDialogOpen(open)
-    if (!open) setMergeTargetId(null)
+    if (!open) {
+      setMergeTargetId(null)
+      setMergeError(null)
+    }
   }
 
   const mergeTarget = otherCharacters.find((c) => c.id === mergeTargetId)
@@ -193,6 +212,12 @@ export function CharacterCard({
           className="min-h-32 bg-background text-sm"
         />
       </div>
+
+      {saveError && (
+        <p className="text-xs text-destructive" role="alert">
+          {saveError}
+        </p>
+      )}
 
       <div className="flex flex-col gap-1">
         <div className="flex items-center gap-2">
@@ -267,6 +292,11 @@ export function CharacterCard({
               ))}
             </SelectContent>
           </Select>
+          {mergeError && (
+            <p className="text-xs text-destructive" role="alert">
+              {mergeError}
+            </p>
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => closeMergeDialog(false)}>
               Cancel
