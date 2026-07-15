@@ -18,6 +18,8 @@ export default defineConfig({
       "/projects": "http://localhost:8000",
       "/characters": "http://localhost:8000",
       "/voices": "http://localhost:8000",
+      "/segments": "http://localhost:8000",
+      "/generation-status": "http://localhost:8000",
     },
   },
 })
