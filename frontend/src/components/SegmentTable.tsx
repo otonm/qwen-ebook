@@ -87,6 +87,15 @@ function GeneratePlayButton({
     }
   }, [hasAudio, segment.audio_path])
 
+  // WR-05: a failed generation (network error, backend error, poll-ceiling
+  // timeout) never makes hasAudio true, so the effect above never resets
+  // autoplayRef — left `true` indefinitely, it would fire an unrelated
+  // future autoplay if this row's audio later becomes available through a
+  // different trigger (e.g. a later batch run).
+  useEffect(() => {
+    if (error) autoplayRef.current = false
+  }, [error])
+
   function handleGenerateClick() {
     autoplayRef.current = true
     void handleGenerate()
