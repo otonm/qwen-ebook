@@ -62,6 +62,20 @@ export function useGenerateStopPlay({
   const hadAudioAtGenerateStartRef = useRef(hasAudio)
   const isRowGenerating = isGenerating || isExternallyGenerating
 
+  // WR-02 fix: keep the latest onRefresh in a ref rather than the effect's
+  // own dependency array. ConfigPanel.CharacterPreviewRow and
+  // SegmentTable.GeneratePlayButton receive onRefresh straight through as a
+  // prop from their parents — if that prop is a fresh closure on every
+  // parent render (not explicitly useCallback-wrapped), keying the timer
+  // effect on onRefresh's identity would tear down and re-create the
+  // interval/timeout on every such render while isGenerating is true,
+  // resetting the GENERATION_POLL_CEILING_MS countdown every time and
+  // defeating the "stuck forever" recovery below.
+  const onRefreshRef = useRef(onRefresh)
+  useEffect(() => {
+    onRefreshRef.current = onRefresh
+  }, [onRefresh])
+
   // Poll for the 202+background-task result while we're the one waiting on
   // a generation we triggered — WR-04 fix: ceiling is GENERATION_POLL_CEILING_MS
   // (well above the backend's own 300s synth timeout) so a legitimately slow
@@ -69,7 +83,7 @@ export function useGenerateStopPlay({
   // Gated on `poll` too — the batch site has SSE already and opts out.
   useEffect(() => {
     if (!poll || !isGenerating) return undefined
-    const interval = setInterval(onRefresh, 1500)
+    const interval = setInterval(() => onRefreshRef.current(), 1500)
     // WR-02: hitting the ceiling used to only stop the poll, leaving
     // isGenerating stuck true forever (spinner with no recovery path)
     // whenever the backend silently swallowed a failure. Reset generating
@@ -83,7 +97,7 @@ export function useGenerateStopPlay({
       clearInterval(interval)
       clearTimeout(timeout)
     }
-  }, [poll, isGenerating, onRefresh])
+  }, [poll, isGenerating])
 
   // The row settles (leaves "generating") once a refetch/SSE update lands —
   // clear both the generating and stopping flags only once we've genuinely
