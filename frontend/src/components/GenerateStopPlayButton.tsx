@@ -20,6 +20,10 @@ export interface GenerateStopPlayButtonProps {
   className?: string
   /** e.g. "audio for segment 3", "preview for Elena", "the joined output" */
   subjectLabel: string
+  /** Overrides STATE_LABEL.idle for sites whose idle action isn't a single
+   * "Generate Preview" (e.g. the batch site's "Generate All") — same
+   * colors/behavior, label only. */
+  idleLabel?: string
   onGenerate: () => void
   onStop: () => void
   onTogglePlay: () => void
@@ -49,6 +53,7 @@ export function GenerateStopPlayButton({
   size = "default",
   className,
   subjectLabel,
+  idleLabel,
   onGenerate,
   onStop,
   onTogglePlay,
@@ -67,7 +72,11 @@ export function GenerateStopPlayButton({
   }
 
   const label =
-    status === "ready" && isPlaying ? "Pause" : STATE_LABEL[status]
+    status === "ready" && isPlaying
+      ? "Pause"
+      : status === "idle" && idleLabel
+        ? idleLabel
+        : STATE_LABEL[status]
 
   const actionWord =
     status === "idle"

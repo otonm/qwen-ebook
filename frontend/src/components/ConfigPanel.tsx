@@ -397,6 +397,7 @@ export function ConfigPanel({
           disabled={generationLocked && batchStatus === "idle"}
           disabledReason="Another generation is already running."
           subjectLabel="the joined output"
+          idleLabel="Generate All"
           onGenerate={() => void handleGenerateAll()}
           onStop={() => void handleStop()}
           onTogglePlay={toggleOutputPlayback}
