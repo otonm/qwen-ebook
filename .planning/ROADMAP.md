@@ -106,8 +106,20 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
   3. Once the joined file is ready, user can click a blue "Download" button to save it under the chosen filename
   4. The downloaded file matches the selected format (correct extension, content type, and audio codec)
 
-**Plans**: TBD
+**Plans**: 3 plans
 **UI hint**: yes
+
+**Wave 1**
+
+- [ ] 06-01-PLAN.md — backend: Project.output_format/output_filename columns, 3-way ffmpeg CODEC_TABLE (FLAC/MP3/Opus), per-project format read + D-07 delete-old, PATCH /projects/{id} config + GET /projects/{id}/download (CFG-06/07/08)
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 06-02-PLAN.md — frontend: editable Output Format Select, Output Filename Input + extension suffix, blue Download button wired to the new endpoints
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [ ] 06-03-PLAN.md — human-verify: format/filename/download end-to-end on the deploy target (checkpoint-gated)
 
 ### Phase 7: Unified Generate/Stop/Play Button & Trimmed Segment Table
 
@@ -134,5 +146,5 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
 | 3. Editable Table, Full Generation Pipeline, Persistence & Deployment | v1.0 | 9/9 | Complete | 2026-07-12 |
 | 4. Immediate Cancellation | v1.1 | 4/4 | Complete    | 2026-07-14 |
 | 5. On-Demand Model Swap | v1.1 | 3/3 | Complete    | 2026-07-14 |
-| 6. Config Panel — Output Format, Filename & Download | v1.1 | 0/TBD | Not started | - |
+| 6. Config Panel — Output Format, Filename & Download | v1.1 | 0/3 | Not started | - |
 | 7. Unified Generate/Stop/Play Button & Trimmed Segment Table | v1.1 | 0/TBD | Not started | - |
