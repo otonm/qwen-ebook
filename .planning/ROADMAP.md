@@ -25,7 +25,7 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
 - [x] **Phase 4: Immediate Cancellation** - Stopping a segment, character preview, or batch generation interrupts the in-flight GPU call immediately, not just the queue (completed 2026-07-14)
 - [x] **Phase 5: On-Demand Model Swap** - User can switch between the 1.7B and 0.6B Qwen TTS models per project, with VRAM-safe load/unload and a steering-limitation warning (completed 2026-07-14)
 - [x] **Phase 6: Config Panel — Output Format, Filename & Download** - User can pick FLAC/MP3/Opus, set a custom filename, and download the finished joined file (completed 2026-07-15)
-- [ ] **Phase 7: Unified Generate/Stop/Play Button & Trimmed Segment Table** - One consistent yellow/red/green control replaces all four hand-rolled generate/play implementations and the separate status badge column
+- [x] **Phase 7: Unified Generate/Stop/Play Button & Trimmed Segment Table** - One consistent yellow/red/green control replaces all four hand-rolled generate/play implementations and the separate status badge column (completed 2026-07-15)
 
 ## Phase Details
 
@@ -161,4 +161,4 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
 | 4. Immediate Cancellation | v1.1 | 4/4 | Complete    | 2026-07-14 |
 | 5. On-Demand Model Swap | v1.1 | 3/3 | Complete    | 2026-07-14 |
 | 6. Config Panel — Output Format, Filename & Download | v1.1 | 3/3 | Complete    | 2026-07-15 |
-| 7. Unified Generate/Stop/Play Button & Trimmed Segment Table | v1.1 | 5/5 | In Progress|  |
+| 7. Unified Generate/Stop/Play Button & Trimmed Segment Table | v1.1 | 5/5 | Complete    | 2026-07-15 |
