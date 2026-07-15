@@ -167,3 +167,7 @@ None - no external service configuration required.
 ---
 *Phase: 06-config-panel-output-format-filename-download*
 *Completed: 2026-07-15*
+
+## Self-Check: PASSED
+
+All 9 files_modified paths confirmed present on disk (backend/app/models.py, backend/app/db.py, backend/app/audio_join.py, backend/app/generation_worker.py, backend/app/config.py, backend/app/main.py, backend/tests/test_config.py, backend/tests/test_audio_join.py, backend/tests/test_project_config.py). All 3 task commit hashes (6165c42, 9e43755, acd0060) confirmed present in `git log --oneline`.
