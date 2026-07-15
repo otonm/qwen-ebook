@@ -221,11 +221,7 @@ async def _join_project(project_id: str) -> None:
         if project is None:
             raise RuntimeError(f"project {project_id} not found — join blocked")
         fmt = project.output_format
-        # D-07: only the latest output persists on disk — delete the
-        # previous joined file before writing the new one.
-        if project.output_path and Path(project.output_path).is_file():
-            logger.info(f"project {project_id}: deleting previous output {project.output_path}")
-            Path(project.output_path).unlink(missing_ok=True)
+        old_output_path = project.output_path
 
     wav_paths = [s.audio_path for s in segments if s.audio_path is not None]
     out_dir = Path(settings.OUTPUT_DIR)
@@ -233,6 +229,10 @@ async def _join_project(project_id: str) -> None:
     # Server-generated uuid filename — never derived from any client string
     # (T-03-06); output_filename is display-only, applied at download time.
     out_path = str(out_dir / f"{uuid.uuid4().hex}.{fmt}")
+    # WR-02: join before touching the previous output — join_wavs can raise
+    # on any ffmpeg failure, and deleting the last good output first would
+    # leave the project with no valid output *and* a dangling output_path
+    # pointing at a file that no longer exists.
     await run_in_threadpool(join_wavs, wav_paths, out_path, fmt)
 
     with Session(engine) as session:
@@ -241,6 +241,12 @@ async def _join_project(project_id: str) -> None:
             project.output_path = out_path
             session.add(project)
             session.commit()
+
+    # D-07: only the latest output persists on disk — delete the previous
+    # joined file only now that the new one is committed as the DB truth.
+    if old_output_path and old_output_path != out_path and Path(old_output_path).is_file():
+        logger.info(f"project {project_id}: deleting previous output {old_output_path}")
+        Path(old_output_path).unlink(missing_ok=True)
 
 
 async def run_batch_generation(project_id: str) -> None:
