@@ -5,14 +5,7 @@ import {
   type RowSelectionState,
   useReactTable,
 } from "@tanstack/react-table"
-import {
-  AlertCircle,
-  CheckCircle2,
-  Clock,
-  Loader2,
-  Pause,
-  Play,
-} from "lucide-react"
+import { Loader2, Pause, Play } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 
 import {
@@ -24,10 +17,8 @@ import {
   patchSegment,
   segmentAudioUrl,
   type Character,
-  type GenerationStatus,
   type Segment,
 } from "@/api/client"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
@@ -56,34 +47,6 @@ interface SegmentTableProps {
 }
 
 const columnHelper = createColumnHelper<Segment>()
-
-// UI-SPEC Generation Status Indicators table — prescriptive badge/icon
-// mapping so no per-status color/icon is invented ad hoc. "queued" shares
-// "pending"'s look (batch-only sub-state, no visual distinction needed).
-const STATUS_BADGE: Record<
-  GenerationStatus,
-  {
-    label: string
-    icon: typeof Clock
-    variant: "outline" | "default" | "secondary" | "destructive"
-  }
-> = {
-  pending: { label: "Pending", icon: Clock, variant: "outline" },
-  queued: { label: "Pending", icon: Clock, variant: "outline" },
-  generating: { label: "Generating…", icon: Loader2, variant: "default" },
-  complete: { label: "Complete", icon: CheckCircle2, variant: "secondary" },
-  error: { label: "Error", icon: AlertCircle, variant: "destructive" },
-}
-
-function StatusBadge({ status }: { status: GenerationStatus }) {
-  const { label, icon: Icon, variant } = STATUS_BADGE[status]
-  return (
-    <Badge variant={variant} className="gap-1 whitespace-nowrap">
-      <Icon className={status === "generating" ? "size-3 animate-spin" : "size-3"} />
-      {label}
-    </Badge>
-  )
-}
 
 /** TBL-04/GEN-06: one icon button does double duty — generates on first
  * click (no audio yet), auto-plays the result once it lands, and toggles
@@ -484,6 +447,18 @@ export function SegmentTable({
         ),
       }),
       columnHelper.display({
+        id: "voice_instructions",
+        header: "Voice Instructions",
+        cell: ({ row }) => (
+          <EditableTextCell
+            segment={row.original}
+            field="voice_instructions"
+            label="Voice Instructions"
+            onSegmentChange={onSegmentChange}
+          />
+        ),
+      }),
+      columnHelper.display({
         id: "text",
         header: "Text",
         cell: ({ row }) => (
@@ -494,11 +469,6 @@ export function SegmentTable({
             onSegmentChange={onSegmentChange}
           />
         ),
-      }),
-      columnHelper.display({
-        id: "status",
-        header: "Status",
-        cell: ({ row }) => <StatusBadge status={row.original.generation_status} />,
       }),
       columnHelper.display({
         id: "controls",
