@@ -146,5 +146,5 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
 | 3. Editable Table, Full Generation Pipeline, Persistence & Deployment | v1.0 | 9/9 | Complete | 2026-07-12 |
 | 4. Immediate Cancellation | v1.1 | 4/4 | Complete    | 2026-07-14 |
 | 5. On-Demand Model Swap | v1.1 | 3/3 | Complete    | 2026-07-14 |
-| 6. Config Panel — Output Format, Filename & Download | v1.1 | 3/3 | Complete   | 2026-07-15 |
+| 6. Config Panel — Output Format, Filename & Download | v1.1 | 3/3 | Complete    | 2026-07-15 |
 | 7. Unified Generate/Stop/Play Button & Trimmed Segment Table | v1.1 | 0/TBD | Not started | - |

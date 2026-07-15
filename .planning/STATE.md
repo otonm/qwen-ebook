@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Generation UX & Config Rework
-current_phase: 6
-current_phase_name: Config Panel — Output Format, Filename & Download
+current_phase: 7
+current_phase_name: Unified Generate/Stop/Play Button & Trimmed Segment Table
 status: executing
 stopped_at: Phase 6 UI-SPEC approved
-last_updated: "2026-07-15T08:58:54.566Z"
+last_updated: "2026-07-15T10:07:10.750Z"
 last_activity: 2026-07-15
-last_activity_desc: Phase 6 execution started
+last_activity_desc: Phase 06 complete, transitioned to Phase 7
 progress:
   total_phases: 7
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 10
-  completed_plans: 7
-  percent: 29
+  completed_plans: 10
+  percent: 43
 ---
 
 # Project State
@@ -28,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-07-13)
 
 ## Current Position
 
-Phase: 6 (Config Panel — Output Format, Filename & Download) — EXECUTING
-Plan: 1 of 3
+Phase: 7 — Unified Generate/Stop/Play Button & Trimmed Segment Table
+Plan: Not started
 Status: Executing Phase 6
-Last activity: 2026-07-15 — Phase 6 execution started
+Last activity: 2026-07-15 — Phase 06 complete, transitioned to Phase 7
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -39,7 +39,7 @@ Progress: [░░░░░░░░░░] 0%
 
 **Velocity:**
 
-- Total plans completed: 19
+- Total plans completed: 22
 - Average duration: - min
 - Total execution time: 0 hours
 
@@ -51,6 +51,7 @@ Progress: [░░░░░░░░░░] 0%
 | 03 | 9 | - | - |
 | 04 | 4 | - | - |
 | 05 | 3 | - | - |
+| 06 | 3 | - | - |
 
 **Recent Trend:**
 
