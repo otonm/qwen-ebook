@@ -307,9 +307,18 @@ export function ConfigPanel({
           <Select
             value={project.tts_model}
             onValueChange={(value) => void handleModelChange(value)}
-            disabled={isSwapping}
+            disabled={isSwapping || generationLocked}
           >
-            <SelectTrigger size="sm" aria-label="TTS model" className="w-full">
+            <SelectTrigger
+              size="sm"
+              aria-label="TTS model"
+              className="w-full"
+              title={
+                generationLocked && !isSwapping
+                  ? "Can't switch models while a generation is running."
+                  : undefined
+              }
+            >
               {isSwapping ? (
                 <span className="flex items-center gap-1.5">
                   <Loader2 className="size-4 animate-spin" /> Switching model…
