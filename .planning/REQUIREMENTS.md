@@ -12,10 +12,10 @@ Requirements for the "Generation UX & Config Rework" milestone. Each maps to roa
 - [x] **GEN-06**: User can stop a currently-generating segment's audio and have the in-flight GPU inference interrupted immediately, not merely queued to finish
 - [x] **GEN-07**: User can stop a currently-generating character voice preview and have it interrupted immediately
 - [x] **GEN-08**: User can stop a running "Generate All" batch and have the in-flight segment's generation interrupted immediately, not just prevented from starting the next one
-- [ ] **GEN-09**: Each per-row segment audio control is a single button that shows yellow "Generate Preview" when idle or stale, red "Stop Generation" while generating, and green "Play" once audio exists
-- [ ] **GEN-10**: Each character preview control follows the same yellow/red/green generate/stop/play pattern as segments
-- [ ] **GEN-11**: The "Generate All" control follows the same yellow/red/green generate/stop/play pattern; once the joined output file is ready it additionally shows a green "Play" (in-browser preview of the joined file)
-- [ ] **GEN-12**: Any edit that invalidates a segment's or character's cached audio visibly reverts its control back to the yellow "Generate Preview" state (single visual source of truth — no separate status indicator)
+- [x] **GEN-09**: Each per-row segment audio control is a single button that shows yellow "Generate Preview" when idle or stale, red "Stop Generation" while generating, and green "Play" once audio exists
+- [x] **GEN-10**: Each character preview control follows the same yellow/red/green generate/stop/play pattern as segments
+- [x] **GEN-11**: The "Generate All" control follows the same yellow/red/green generate/stop/play pattern; once the joined output file is ready it additionally shows a green "Play" (in-browser preview of the joined file)
+- [x] **GEN-12**: Any edit that invalidates a segment's or character's cached audio visibly reverts its control back to the yellow "Generate Preview" state (single visual source of truth — no separate status indicator)
 
 ### Config Panel (CFG)
 
@@ -27,7 +27,7 @@ Requirements for the "Generation UX & Config Rework" milestone. Each maps to roa
 
 ### Segment Table (TBL)
 
-- [ ] **TBL-05**: The segment table shows exactly 3 editable columns — Narrator, Voice Instructions, Text — with the separate Status badge column removed (state is now conveyed by the GEN-09 button alone)
+- [x] **TBL-05**: The segment table shows exactly 3 editable columns — Narrator, Voice Instructions, Text — with the separate Status badge column removed (state is now conveyed by the GEN-09 button alone)
 
 ## Out of Scope
 
@@ -48,16 +48,16 @@ Explicitly excluded from v1.1. Documented to prevent scope creep.
 | GEN-06 | Phase 4 | Complete |
 | GEN-07 | Phase 4 | Complete |
 | GEN-08 | Phase 4 | Complete |
-| GEN-09 | Phase 7 | Pending |
-| GEN-10 | Phase 7 | Pending |
-| GEN-11 | Phase 7 | Pending |
-| GEN-12 | Phase 7 | Pending |
+| GEN-09 | Phase 7 | Complete |
+| GEN-10 | Phase 7 | Complete |
+| GEN-11 | Phase 7 | Complete |
+| GEN-12 | Phase 7 | Complete |
 | CFG-04 | Phase 5 | Complete |
 | CFG-05 | Phase 5 | Complete |
 | CFG-06 | Phase 6 | Complete |
 | CFG-07 | Phase 6 | Complete |
 | CFG-08 | Phase 6 | Complete |
-| TBL-05 | Phase 7 | Pending |
+| TBL-05 | Phase 7 | Complete |
 
 **Coverage:**
 

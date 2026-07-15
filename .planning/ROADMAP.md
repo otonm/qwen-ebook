@@ -134,7 +134,7 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
   4. Editing a segment's or character's text, voice instructions, or narrator immediately reverts its control back to yellow, with no separate status badge anywhere in the UI
   5. The segment table shows exactly 3 editable columns (Narrator, Voice Instructions, Text) — the Status badge column is gone
 
-**Plans**: 4/5 plans executed
+**Plans**: 5/5 plans executed
 **UI hint**: yes
 
 **Wave 1**
@@ -149,7 +149,7 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
 
 **Wave 3** *(blocked on Wave 2)*
 
-- [ ] 07-05-PLAN.md — human-verify: all four buttons, joined-output Play, edit-reverts, trimmed table, layout, and the Pitfall-2 regenerate case end-to-end (checkpoint-gated)
+- [x] 07-05-PLAN.md — human-verify: all four buttons, joined-output Play, edit-reverts, trimmed table, layout, and the Pitfall-2 regenerate case end-to-end (checkpoint-gated)
 
 ## Progress
 
@@ -161,4 +161,4 @@ Full details archived: `.planning/milestones/v1.0-ROADMAP.md`
 | 4. Immediate Cancellation | v1.1 | 4/4 | Complete    | 2026-07-14 |
 | 5. On-Demand Model Swap | v1.1 | 3/3 | Complete    | 2026-07-14 |
 | 6. Config Panel — Output Format, Filename & Download | v1.1 | 3/3 | Complete    | 2026-07-15 |
-| 7. Unified Generate/Stop/Play Button & Trimmed Segment Table | v1.1 | 4/5 | In Progress|  |
+| 7. Unified Generate/Stop/Play Button & Trimmed Segment Table | v1.1 | 5/5 | In Progress|  |

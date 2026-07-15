@@ -5,16 +5,16 @@ milestone_name: Generation UX & Config Rework
 current_phase: 7
 current_phase_name: Unified Generate/Stop/Play Button & Trimmed Segment Table
 status: executing
-stopped_at: Phase 7 UI-SPEC approved
-last_updated: "2026-07-15T19:56:14.814Z"
+stopped_at: Completed 07-05-PLAN.md (Phase 7 complete)
+last_updated: "2026-07-15T21:34:31.078Z"
 last_activity: 2026-07-15
 last_activity_desc: Phase 7 execution started
 progress:
   total_phases: 7
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 15
-  completed_plans: 10
-  percent: 43
+  completed_plans: 15
+  percent: 57
 ---
 
 # Project State
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-07-13)
 ## Current Position
 
 Phase: 7 (Unified Generate/Stop/Play Button & Trimmed Segment Table) — EXECUTING
-Plan: 1 of 5
-Status: Executing Phase 7
+Plan: 2 of 5
+Status: Ready to execute
 Last activity: 2026-07-15 — Phase 7 execution started
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -59,6 +59,11 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: -
 
 *Updated after each plan completion*
+**Per-Plan Metrics:**
+
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
+| Phase 07 P05 | 2min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -71,6 +76,8 @@ Recent decisions affecting current work:
 - Roadmap (v1.1): Phase 4 (Immediate Cancellation) sequenced first — hardest unknown (StoppingCriteria on real ROCm hardware) and a structural prerequisite (addressable per-segment/per-character task handles) that Phases 5 and 7 build on.
 - Roadmap (v1.1): Phase 6 (Config Panel output/filename/download) marked as technically independent of Phases 4-5 (no shared code with the TTS HTTP boundary) but sequenced after them per research's default milestone build order, not a hard dependency.
 - Roadmap (v1.1): Phase 7 (unified button) deliberately last — depends on Phase 4's sync-to-async backend contract change plus the model/format/download controls Phases 5-6 add, so it's built against a stable backend rather than a moving API shape.
+- [Phase ?]: Phase 7 Plan 05: fixed self-triggered generation settle bug once in shared useGenerateStopPlay hook rather than per-caller (CharacterPreviewRow, CharacterCard both hardcode isExternallyGenerating: false).
+- [Phase ?]: Phase 7 Plan 05: GenerateStopPlayButton idleLabel prop is optional, defaults to existing 'Generate Preview' text — only the batch Generate All call site needed a change.
 
 ### Pending Todos
 
@@ -106,7 +113,7 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-15T15:00:30.479Z
-Stopped at: Phase 7 UI-SPEC approved
-Resume file: .planning/phases/07-unified-generate-stop-play-button-trimmed-segment-table/07-UI-SPEC.md
+Last session: 2026-07-15T21:34:31.072Z
+Stopped at: Completed 07-05-PLAN.md (Phase 7 complete)
+Resume file: None
 Next step: /gsd-plan-phase 4
