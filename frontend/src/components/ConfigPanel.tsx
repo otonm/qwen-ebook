@@ -4,8 +4,10 @@ import { useEffect, useRef, useState } from "react"
 import {
   cancelBatchGeneration,
   cancelCharacterPreview,
+  downloadUrl,
   errorMessage,
   GENERATION_POLL_CEILING_MS,
+  patchProjectConfig,
   previewUrl,
   runBatchGeneration,
   setProjectModel,
@@ -15,6 +17,7 @@ import {
   type Segment,
 } from "@/api/client"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
 import {
   Select,
@@ -224,6 +227,18 @@ export function ConfigPanel({
   const [batchError, setBatchError] = useState<string | null>(null)
   const [isSwapping, setIsSwapping] = useState(false)
   const [swapError, setSwapError] = useState<string | null>(null)
+  const [filenameDraft, setFilenameDraft] = useState(project.output_filename ?? "")
+  const [configError, setConfigError] = useState<string | null>(null)
+  // D-04 echo: filenameDraft trusts server state, same discipline as the
+  // Model Select reverting off project.tts_model — re-seeds during render
+  // (React's "adjusting state on prop change" pattern, not a setState-in-
+  // effect) after every successful PATCH's onRefresh (sanitization result)
+  // and on project swap.
+  const [lastSyncedFilename, setLastSyncedFilename] = useState(project.output_filename)
+  if (project.output_filename !== lastSyncedFilename) {
+    setLastSyncedFilename(project.output_filename)
+    setFilenameDraft(project.output_filename ?? "")
+  }
 
   const hasAnyComplete = segments.some((segment) => segment.generation_status === "complete")
   const hasAnyIncomplete = segments.some((segment) => segment.generation_status !== "complete")
@@ -248,6 +263,13 @@ export function ConfigPanel({
   // rather than silently skipping failed segments — no "last good"
   // fallback in v1.
   const joinBlocked = generation.status === "error" && failedCount > 0
+  const hasOutput = Boolean(project.output_path)
+  // D-05: the anchor's download attribute must mirror the server's derived
+  // stem exactly (sanitized output_filename, or the source filename's stem)
+  // — a literal "output" fallback would make the browser save output.mp3
+  // instead of book.mp3 since same-origin browsers honor this over
+  // Content-Disposition.
+  const downloadFilename = `${project.output_filename ?? project.filename.replace(/\.[^.]+$/, "")}.${project.output_format}`
 
   const progressPercent =
     generation.overall && generation.overall.total > 0
@@ -304,6 +326,27 @@ export function ConfigPanel({
     }
   }
 
+  // CFG-06/CFG-07: no generation lock claimed here — format/filename are
+  // inert config (RESEARCH.md Pattern 4), so this PATCH commits immediately
+  // regardless of isRunning.
+  async function handleConfigChange(patch: { output_format?: string; output_filename?: string }) {
+    setConfigError(null)
+    try {
+      await patchProjectConfig(project.id, patch)
+      onRefresh()
+    } catch (err) {
+      setConfigError(errorMessage(err, "Couldn't save output settings."))
+    }
+  }
+
+  // Commits on blur, not per-keystroke, and only when the trimmed draft
+  // actually differs from the last-saved value.
+  async function handleFilenameBlur() {
+    const trimmed = filenameDraft.trim()
+    if (trimmed === (project.output_filename ?? "")) return
+    await handleConfigChange({ output_filename: trimmed })
+  }
+
   async function handleStop() {
     setIsCancelling(true)
     setBatchError(null)
@@ -356,13 +399,41 @@ export function ConfigPanel({
             </p>
           )}
         </div>
-        <ConfigField label="Output Format" value={project.output_format.toUpperCase()} />
-        <ConfigField
-          label="Output File"
-          value={
-            project.output_path ? (project.output_path.split("/").pop() ?? "") : "Not generated yet"
-          }
-        />
+        <div className="flex flex-col gap-1">
+          <span className="text-xs font-semibold text-muted-foreground">Output Format</span>
+          <Select
+            value={project.output_format}
+            onValueChange={(value) => void handleConfigChange({ output_format: value })}
+          >
+            <SelectTrigger size="sm" aria-label="Output format" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="flac">FLAC</SelectItem>
+              <SelectItem value="mp3">MP3</SelectItem>
+              <SelectItem value="opus">Opus</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <span className="text-xs font-semibold text-muted-foreground">Output Filename</span>
+          <div className="flex items-center gap-1">
+            <Input
+              aria-label="Output filename"
+              value={filenameDraft}
+              onChange={(e) => setFilenameDraft(e.target.value)}
+              onBlur={() => void handleFilenameBlur()}
+              placeholder={project.filename.replace(/\.[^.]+$/, "")}
+              className="flex-1"
+            />
+            <span className="text-sm text-muted-foreground">.{project.output_format}</span>
+          </div>
+          {configError && (
+            <p className="text-xs text-destructive" role="alert">
+              {configError}
+            </p>
+          )}
+        </div>
       </section>
 
       <section className="flex flex-col gap-2">
@@ -443,6 +514,22 @@ export function ConfigPanel({
             {batchError}
           </p>
         )}
+        <Button
+          asChild={hasOutput}
+          type="button"
+          variant="default"
+          className="w-full"
+          disabled={!hasOutput}
+          title={hasOutput ? undefined : "Generate All first — nothing to download yet."}
+        >
+          {hasOutput ? (
+            <a href={downloadUrl(project.id)} download={downloadFilename}>
+              Download
+            </a>
+          ) : (
+            "Download"
+          )}
+        </Button>
       </section>
     </div>
   )
