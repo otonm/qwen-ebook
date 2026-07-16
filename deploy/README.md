@@ -129,7 +129,8 @@ ROCm's officially supported architecture list — see
 `backend/GPU-ENABLEMENT.md` for the full historical gfx1103 fallback-ladder
 investigation log. Re-verified directly on the production RX 9070 XT VM:
 
-1. ✅ `rocminfo` and a real on-device PyTorch matmul (`backend/tts_service/smoke_gpu.py`)
+1. ✅ `rocminfo` and a real on-device PyTorch matmul (`smoke_gpu.py`, a
+   verification script since removed from the repo)
    both pass with `gfx1201` correctly identified as `AMD Radeon RX 9070 XT`
    — **no** `HSA_OVERRIDE_GFX_VERSION` or `GPU_SECURITY_OPT` needed, confirming
    gfx1201's official ROCm support means neither dev-host workaround applies
@@ -181,7 +182,7 @@ sudo systemctl daemon-reload
 
 Root-owned `0644` permissions match standard systemd unit-file convention —
 no secret material lives in these units (the only env vars are the
-non-sensitive `TTS_BACKEND`/`TTS_SERVICE_URL`).
+non-sensitive `TTS_SERVICE_URL`).
 
 ### Bring the pod up
 

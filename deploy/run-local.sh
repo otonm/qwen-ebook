@@ -86,9 +86,8 @@ ${PODMAN} run -d --pod "${POD_NAME}" --name "${POD_NAME}-tts" \
   -v "${HF_CACHE_VOLUME}:/home/ubuntu/.cache/huggingface" \
   "${TTS_IMAGE}"
 
-log "Starting backend container (no GPU devices; TTS_BACKEND=http, TTS_SERVICE_URL=http://localhost:8001)..."
+log "Starting backend container (no GPU devices; TTS_SERVICE_URL=http://localhost:8001)..."
 ${PODMAN} run -d --pod "${POD_NAME}" --name "${POD_NAME}-backend" \
-  -e TTS_BACKEND=http \
   -e TTS_SERVICE_URL=http://localhost:8001 \
   -v "${DATA_VOLUME}:/data" \
   -e DATABASE_URL=sqlite:////data/projects.db \

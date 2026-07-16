@@ -39,7 +39,6 @@ in `.planning/` (`research/STACK.md`).
 | Progress push | `fastapi.sse.EventSourceResponse` | One-way server->client; not WebSockets. |
 | Container | Podman + Quadlets (systemd units) | GPU passthrough: `/dev/kfd`, `/dev/dri`, `--group-add keep-groups`. |
 | Tooling | `uv` (deps/venv), `ruff` (lint/format) | |
-| Dev without GPU | `TTS_BACKEND=mock` returns a placeholder WAV | Gate the real `qwen-tts` import behind the flag. |
 
 ### What NOT to use
 
@@ -72,10 +71,6 @@ user rather than deciding it here.
   `File(...)`/`Depends(...)` default-argument pattern, which needs
   `# noqa: B008`). Every surviving `noqa` MUST carry an inline or preceding
   comment explaining *why* it's required — not just what it suppresses.
-  **Exception: test files** (`backend/tests/`) may use `noqa`
-  freely (e.g. `E402` for the `os.environ.setdefault(...)` → import ordering
-  pattern needed to set env vars before app imports) — test ergonomics don't
-  need the same justification bar as shipped code.
   **Existing `# noqa` directives**: analyze critically, remove quickly
 - **Logging (required):** Use the `logging` module for all error reporting
   and debugging output — never `print()`. Implement debugging messages

@@ -16,7 +16,6 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "pytest>=8.3,<9.0",
     "ruff>=0.8,<1.0",
 ]
 
@@ -33,9 +32,3 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-markers = [
-    "integration: requires the real two-container pod running via `bash deploy/run-local.sh`",
-]

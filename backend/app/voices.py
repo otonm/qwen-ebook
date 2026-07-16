@@ -3,7 +3,7 @@ LLM's casting pick (PRESET-REWORK).
 
 6 curated personas, each with a fleshed-out steering `description` the
 analysis LLM adapts per character (see analysis_client.py's system prompt,
-built from `preset_description()` so prompt and roster can't drift) and a
+built from PRESET_VOICES so prompt and roster can't drift) and a
 `speaker` — the underlying Qwen CustomVoice speaker name that actually drives
 timbre, confirmed 2026-07-12 by calling
 tts_service.model.get_supported_speakers() inside the live qwen-ebook-tts
@@ -103,13 +103,6 @@ def preset_speaker(preset_id: str) -> str:
     DEFAULT_PRESET's speaker (the "auto-selected" sentinel, WIZ-03)."""
     voice = _PRESET_BY_NAME.get(preset_id)
     return voice["speaker"] if voice else _DEFAULT_SPEAKER
-
-
-def preset_description(preset_id: str) -> str:
-    """Return a preset's steering description (used to build the analysis
-    prompt and as the wizard's editable default)."""
-    voice = _PRESET_BY_NAME.get(preset_id)
-    return voice["description"] if voice else _PRESET_BY_NAME[DEFAULT_PRESET]["description"]
 
 
 def merge_instructions(base: str, delivery: str) -> str:

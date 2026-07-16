@@ -1,5 +1,5 @@
 # Quadlet container unit — declarative systemd translation of run-local.sh's
-# CPU-only `podman run --pod qwen-ebook -e TTS_BACKEND=http -e
+# CPU-only `podman run --pod qwen-ebook -e
 # TTS_SERVICE_URL=http://localhost:8001 ...` block (DEPL-02).
 #
 # Reconfirm the production VM's exact `podman --version` over Tailscale SSH
@@ -16,9 +16,8 @@ Image=localhost/qwen-ebook-backend:dev
 Pod=qwen-ebook.pod
 # No AddDevice here — the backend never imports torch/qwen-tts and stays
 # CPU-only; GPU devices are scoped to qwen-ebook-tts.container only.
-Environment=TTS_BACKEND=http
 Environment=TTS_SERVICE_URL=http://localhost:8001
-# Real LLM cast/segment analysis (LLM_BACKEND=openrouter, OPENROUTER_API_KEY)
+# LLM cast/segment analysis credentials (OPENROUTER_API_KEY)
 # — sourced from the same dev .env used for local `uv run` testing rather
 # than duplicated into this unit, so the key lives in exactly one
 # gitignored place (backend/.gitignore excludes .env). This is a system

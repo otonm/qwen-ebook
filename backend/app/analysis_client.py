@@ -1,10 +1,6 @@
 """LLM cast/segment analysis client.
 
-Mirrors tts_client.py's mock/real backend switch (LLM_BACKEND, not
-TTS_BACKEND): with LLM_BACKEND=mock, returns canned deterministic cast +
-segments and makes no network call at all.
-
-Real wiring (CAST-01/CAST-03) talks to OpenRouter's OpenAI-compatible
+Talks (CAST-01/CAST-03) to OpenRouter's OpenAI-compatible
 chat-completions endpoint via `httpx` (already a project dependency — no
 provider-specific SDK needed, and OpenRouter itself is a routing layer
 in front of many providers/models, not a single vendor SDK). System
@@ -24,7 +20,7 @@ import httpx
 
 from app.config import settings
 from app.schemas import CastAnalysisResult, CharacterSuggestion, SegmentSuggestion
-from app.voices import DEFAULT_PRESET, PRESET_VOICES, preset_description
+from app.voices import DEFAULT_PRESET, PRESET_VOICES
 
 _OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions"
 
@@ -142,48 +138,6 @@ adapting, or condensing it.
 # far needs it tunable per environment.
 _ANALYSIS_TEMPERATURE = 0.2
 
-_MOCK_NARRATOR = CharacterSuggestion(
-    name="Narrator",
-    voice_preset=DEFAULT_PRESET,
-    description=preset_description(DEFAULT_PRESET),
-    is_narrator=True,
-)
-_MOCK_CHARACTER = CharacterSuggestion(
-    name="Alex",
-    voice_preset="playful_student",
-    description="A determined supporting character who speaks with quiet confidence.",
-)
-_NARRATOR_INSTRUCTIONS = ""
-_CHARACTER_INSTRUCTIONS = "speaks with quiet, determined confidence"
-
-
-def _mock_paragraphs(text: str) -> list[str]:
-    paragraphs = [p.strip() for p in text.strip().split("\n\n") if p.strip()]
-    return paragraphs or [text.strip()]
-
-
-def _mock_analyze(text: str) -> CastAnalysisResult:
-    # Canned deterministic output: a narrator + one named character, with
-    # segments derived from every paragraph (mock backend, no real cast
-    # detection happens here). Must cover 100% of the input like the real
-    # backend now does (content-loss fix round 2) — analysis_worker's
-    # coverage-retry gate would otherwise fail a mock-mode project with more
-    # than a few paragraphs, since mock's output is deterministic and a
-    # retry would never improve it.
-    paragraphs = _mock_paragraphs(text)
-    segments = [
-        SegmentSuggestion(
-            order=index,
-            character_name=_MOCK_NARRATOR.name if index % 2 == 0 else _MOCK_CHARACTER.name,
-            text=paragraph,
-            voice_instructions=(
-                _NARRATOR_INSTRUCTIONS if index % 2 == 0 else _CHARACTER_INSTRUCTIONS
-            ),
-        )
-        for index, paragraph in enumerate(paragraphs)
-    ]
-    return CastAnalysisResult(characters=[_MOCK_NARRATOR, _MOCK_CHARACTER], segments=segments)
-
 
 def _build_continuity_block(
     running_cast: list[CharacterSuggestion] | None,
@@ -221,11 +175,16 @@ def _build_continuity_block(
     return "\n".join(lines)
 
 
-async def _real_analyze(
+async def analyze(
     text: str,
-    running_cast: list[CharacterSuggestion] | None,
-    recent_segments: list[SegmentSuggestion] | None,
+    running_cast: list[CharacterSuggestion] | None = None,
+    recent_segments: list[SegmentSuggestion] | None = None,
 ) -> CastAnalysisResult:
+    """Detect the cast + segments for `text`.
+
+    `running_cast`/`recent_segments` carry cross-chunk reconciliation
+    context (D-07/D-08), used on multi-chunk calls.
+    """
     continuity = _build_continuity_block(running_cast, recent_segments)
     payload = {
         "model": settings.OPENROUTER_MODEL,
@@ -259,20 +218,3 @@ async def _real_analyze(
 
     content = response.json()["choices"][0]["message"]["content"]
     return CastAnalysisResult.model_validate_json(content)
-
-
-async def analyze(
-    text: str,
-    running_cast: list[CharacterSuggestion] | None = None,
-    recent_segments: list[SegmentSuggestion] | None = None,
-) -> CastAnalysisResult:
-    """Detect the cast + segments for `text`.
-
-    `running_cast`/`recent_segments` carry cross-chunk reconciliation
-    context (D-07/D-08), used only on the non-mock path's multi-chunk
-    calls.
-    """
-    if settings.LLM_BACKEND == "mock":
-        return _mock_analyze(text)
-
-    return await _real_analyze(text, running_cast, recent_segments)

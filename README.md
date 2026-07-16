@@ -32,7 +32,6 @@ qwen-ebook/
 │                        EPUB parsing, the TTS queue, ffmpeg join, and SQLite persistence
 │   ├── app/             API routes, chunking, EPUB parsing, LLM client, TTS client, DB models
 │   ├── tts_service/     Self-hosted Qwen TTS inference server (runs in its own GPU container)
-│   ├── tests/           Backend test suite
 │   ├── Containerfile.backend   CPU-only backend image (no GPU deps)
 │   └── Containerfile.tts       GPU-scoped TTS inference image (ROCm + Qwen TTS)
 ├── frontend/            React + TypeScript UI (the segment table, cast wizard, config panel)

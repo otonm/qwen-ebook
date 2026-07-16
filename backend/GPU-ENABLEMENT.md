@@ -6,6 +6,8 @@
 
 This log records the actual, ordered fallback-ladder investigation performed on this exact host, per RESEARCH.md Common Pitfalls 1/2/5 and Open Question 1. Re-verification on the production RX 9070 XT (`gfx1201`) VM is a tracked follow-up (D-09), not covered here.
 
+> Historical note: the `smoke_gpu.py` / `spike_cancel_hw.py` verification scripts referenced below have since been removed from the repo (production is verified and stable); retrieve them from git history if ever needed again.
+
 ## Result Summary
 
 **Working configuration (rung 2 of the fallback ladder):**

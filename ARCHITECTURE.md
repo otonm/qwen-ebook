@@ -102,9 +102,7 @@ backend process.
    (`cache_key.compute_cache_key()` over resolved speaker + voice
    instructions + text + a hardcoded TTS model-version constant) and only
    calls `tts_client.synthesize()` on a cache miss. `synthesize()` posts to
-   the TTS container's `POST /synthesize` over HTTP
-   (`TTS_BACKEND=http`/`TTS_SERVICE_URL`); a `TTS_BACKEND=mock` dev mode
-   returns a stdlib-generated silent WAV with no GPU dependency at all.
+   the TTS container's `POST /synthesize` over HTTP (`TTS_SERVICE_URL`).
    Batch generation streams `{segment_id, n, total, status}` progress over
    `GET /projects/{id}/generation-stream`, is resumable across a crash
    (stale `"generating"` rows are reset to `"pending"` on restart), and one
@@ -143,9 +141,6 @@ backend/
   tts_service/     GPU-scoped inference server — the only place torch/
                    qwen-tts are imported. Built into a separate container
                    image (Containerfile.tts) with /dev/kfd, /dev/dri passthrough.
-  tests/           pytest suite (mock backends by default; an `integration`
-                   marker gates tests that require the real two-container
-                   pod).
   Containerfile.backend / Containerfile.tts   Two separate container images
                    per the CPU/GPU isolation boundary above.
 frontend/
@@ -243,8 +238,7 @@ reachable from the host network.
 
 ## Testing
 
-The backend test suite (`backend/tests/`, pytest) runs entirely against the
-`mock` LLM/TTS backends by default, so it needs no GPU and no OpenRouter key.
-Tests requiring the real two-container pod are gated behind the
-`integration` marker (`backend/pyproject.toml`) and run only against
-`bash deploy/run-local.sh`.
+Testing runs against the real deployment: bring the two-container pod up
+with `bash deploy/run-local.sh` and exercise the app end-to-end (upload →
+analysis → generation → join). There is no mock backend or offline test
+suite — the app always talks to the real TTS container and OpenRouter.

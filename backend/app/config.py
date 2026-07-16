@@ -38,7 +38,6 @@ _DEFAULT_DATABASE_URL = f"sqlite:///{_REPO_ROOT / 'backend' / 'projects.db'}"
 
 @dataclass(frozen=True)
 class Settings:
-    TTS_BACKEND: str
     TTS_SERVICE_URL: str
     TTS_DEFAULT_SPEAKER: str
     CHUNK_TARGET_LEN: int
@@ -47,7 +46,6 @@ class Settings:
     OUTPUT_DIR: str
     PREVIEW_DIR: str
     STATIC_DIR: str
-    LLM_BACKEND: str
     OPENROUTER_API_KEY: str
     OPENROUTER_MODEL: str
     DATABASE_URL: str
@@ -59,7 +57,6 @@ def load_settings() -> Settings:
     output_dir = os.environ.get("OUTPUT_DIR", _DEFAULT_OUTPUT_DIR)
 
     return Settings(
-        TTS_BACKEND=os.environ.get("TTS_BACKEND", "mock"),
         TTS_SERVICE_URL=os.environ.get("TTS_SERVICE_URL", "http://localhost:8001"),
         TTS_DEFAULT_SPEAKER=os.environ.get("TTS_DEFAULT_SPEAKER", ""),
         CHUNK_TARGET_LEN=_env_int("CHUNK_TARGET_LEN", 800),
@@ -68,7 +65,6 @@ def load_settings() -> Settings:
         OUTPUT_DIR=output_dir,
         PREVIEW_DIR=os.environ.get("PREVIEW_DIR", f"{output_dir}/previews"),
         STATIC_DIR=os.environ.get("STATIC_DIR", _DEFAULT_STATIC_DIR),
-        LLM_BACKEND=os.environ.get("LLM_BACKEND", "mock"),
         OPENROUTER_API_KEY=os.environ.get("OPENROUTER_API_KEY", ""),
         OPENROUTER_MODEL=os.environ.get("OPENROUTER_MODEL", "x-ai/grok-4.3"),
         DATABASE_URL=os.environ.get("DATABASE_URL", _DEFAULT_DATABASE_URL),
@@ -96,9 +92,5 @@ def load_settings() -> Settings:
     )
 
 
-# Module-level singleton. Read once at import time; tests that need different
-# env vars should reload the module, or use
-# `monkeypatch.setattr(app.config, "settings", Settings(...))` to swap the
-# whole singleton — individual fields can't be patched since `Settings` is
-# frozen (IN-01).
+# Module-level singleton, read once at import time (IN-01: frozen dataclass).
 settings = load_settings()
