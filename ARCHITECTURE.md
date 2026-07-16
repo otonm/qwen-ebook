@@ -18,7 +18,9 @@ static assets from the backend container, is the sole UI. There is no
 message queue, no separate worker process, and no auth layer: the app is
 reached exclusively over Tailscale by one trusted user, and concurrency is
 handled with plain `asyncio` tasks and per-project queues inside the single
-backend process.
+backend process. Both the LLM and TTS integrations are HTTP-only — there is
+no mock/offline mode built into the app; development and testing happen
+against the real OpenRouter API and the real TTS container.
 
 ## Component diagram
 
@@ -67,12 +69,14 @@ backend process.
    footnote stripping, zip-bomb guard) or decodes UTF-8 directly for plain
    text, creates a `Project` row with `status="analyzing"`, and spawns a
    background `asyncio.Task` running `analysis_worker.run_analysis()`.
-2. **Chunk (if oversized)** — `analysis_worker._should_chunk()` estimates
-   tokens (`token_estimate.py`); text under the `ANALYSIS_TOKEN_LIMIT` is
-   analyzed in a single LLM call, oversized text is split by
+2. **Chunk (if oversized)** — `analysis_worker.estimate_tokens()` (a
+   chars/4 heuristic, no tokenizer dependency) sizes the source text; text
+   at or under `ANALYSIS_TOKEN_LIMIT` is analyzed in a single LLM call via
+   `run_analysis()`, oversized text falls back to
+   `_run_chunked_analysis()`, which splits it with
    `chunking.chunk_paragraphs()` (paragraph-boundary greedy merge, sentence
-   split as the oversized-paragraph fallback) and grouped into per-call
-   batches.
+   split as the oversized-paragraph fallback) and groups the pieces into
+   per-call batches via `_group_chunks()`.
 3. **LLM cast/segment analysis** — `analysis_client.analyze()` posts to
    OpenRouter's chat-completions endpoint (`x-ai/grok-4.3` by default,
    `OPENROUTER_MODEL` env-configurable) with `response_format:
@@ -100,18 +104,36 @@ backend process.
    `generation_worker.run_batch_generation()`) call
    `main.regenerate_segment()`, which recomputes a content-hash cache key
    (`cache_key.compute_cache_key()` over resolved speaker + voice
-   instructions + text + a hardcoded TTS model-version constant) and only
-   calls `tts_client.synthesize()` on a cache miss. `synthesize()` posts to
-   the TTS container's `POST /synthesize` over HTTP (`TTS_SERVICE_URL`).
-   Batch generation streams `{segment_id, n, total, status}` progress over
+   instructions + text + the *live* per-project `model_id`
+   — `Project.tts_model`, `"1.7b"` or `"0.6b"` — rather than a hardcoded
+   constant, so a per-project model swap naturally invalidates every
+   previously-cached segment) and only calls `tts_client.synthesize()` on a
+   cache miss. `synthesize()` posts to the TTS container's
+   `POST /synthesize` over HTTP (`TTS_SERVICE_URL`). A project's model can
+   be swapped on demand — the backend calls `tts_client.load_model()`,
+   which posts to the TTS container's `POST /model/{model_id}/load` to swap
+   the resident checkpoint between the two supported models. All
+   generation (segment, character preview, or batch) shares one global
+   single-flight lock (`generation_worker.try_claim_generation()`, keyed by
+   a `"segment:{id}"`/`"preview:{id}"`/`"batch:{id}"` label) since only one
+   synthesis call may use the single GPU at a time; an in-flight call can be
+   interrupted via `POST /projects/{id}/generate/cancel`, which calls
+   `tts_client.cancel()` (posts to the TTS container's `POST /cancel`) and
+   awaits the running task rather than cancelling it outright, so the loop
+   only advances once the interrupted call has actually finished. Batch
+   generation streams `{segment_id, n, total, status}` progress over
    `GET /projects/{id}/generation-stream`, is resumable across a crash
    (stale `"generating"` rows are reset to `"pending"` on restart), and one
    segment's synthesis failure never aborts the rest of the run.
 7. **Join** — once every segment has a valid `audio_path`,
    `generation_worker._join_project()` calls `audio_join.join_wavs()`, which
-   shells out to system `ffmpeg` via the concat demuxer (stream-copy for
-   `wav`, `libmp3lame` re-encode for `mp3`) with an explicit argument list
-   (never a shell string) and writes the joined file to `Project.output_path`.
+   shells out to system `ffmpeg` via the concat demuxer with an explicit
+   argument list (never a shell string) and always re-encodes (no
+   stream-copy path) into one of three supported output formats looked up
+   from `audio_join.CODEC_TABLE` — `flac`, `mp3` (`libmp3lame`), or `opus`
+   (`libopus`, muxed into an Ogg container) — per `Project.output_format`;
+   an unlisted format raises rather than silently falling back to `mp3`.
+   The joined file is written to `Project.output_path`.
 8. **Download** — the joined file is served back to the browser; per-segment
    preview audio (`GET /segments/{id}/audio.wav`) and character voice
    previews (`GET /characters/{id}/preview.wav`) are available throughout
@@ -123,13 +145,15 @@ backend process.
 |---|---|---|
 | `Project` / `Character` / `Segment` (SQLModel tables) | `backend/app/models.py` | The entire persisted app state: source text, detected cast, ordered narration/dialogue segments, generation status, and cache keys. |
 | `CastAnalysisResult` / `CharacterSuggestion` / `SegmentSuggestion` (Pydantic) | `backend/app/schemas.py` | One schema shared verbatim across the LLM's structured-output contract, DB persistence, and the API response shape — no separate hand-maintained schema to drift. |
-| `Settings` (frozen dataclass) | `backend/app/config.py` | Typed, environment-driven configuration (backend selection, paths, LLM/TTS settings), loaded once as a module-level singleton. |
+| `Settings` (frozen dataclass) | `backend/app/config.py` | Typed, environment-driven configuration (upload/output paths, LLM/TTS service URLs and defaults, analysis token limit), loaded once as a module-level singleton. |
 | Per-project `asyncio.Queue` progress registries | `backend/app/analysis_worker.py`, `backend/app/generation_worker.py` | In-process pub/sub for SSE progress, one registry for analysis and a separate one for generation — no external broker. |
-| `compute_cache_key()` | `backend/app/cache_key.py` | SHA-256 over `(resolved_speaker, voice_instructions, text, TTS_MODEL_VERSION)` — the sole cache-invalidation mechanism for generated audio. |
-| `synthesize()` / `tts_health()` | `backend/app/tts_client.py` | The backend's only touchpoint with TTS — switches between the `mock` (stdlib WAV, no GPU) and `http` (calls the TTS container) backends. |
+| `compute_cache_key()` | `backend/app/cache_key.py` | SHA-256 over `(resolved_speaker, voice_instructions, text, model_id)`, where `model_id` is always the *live* `Project.tts_model` recomputed fresh before every generate call — the sole cache-invalidation mechanism for generated audio, and what makes a per-project model swap force-invalidate every previously-cached segment for free. |
+| `synthesize()` / `load_model()` / `cancel()` / `tts_health()` | `backend/app/tts_client.py` | The backend's only touchpoint with TTS — a thin `httpx` HTTP client with no mock/offline mode; every call is a real POST to the TTS container (`TTS_SERVICE_URL`). |
 | `extract_text()` | `backend/app/epub_parser.py` | EPUB → plain narrative text: spine reading order, footnote stripping, zip-bomb guard, chapter-boundary preservation. |
 | `chunk_paragraphs()` | `backend/app/chunking.py` | Stdlib-regex paragraph/sentence chunker used only when text exceeds the single-call token budget. |
-| TTS inference server | `backend/tts_service/server.py`, `backend/tts_service/model.py` | The isolated GPU process: loads Qwen3-TTS-12Hz-1.7B-CustomVoice once at startup, exposes `POST /synthesize` and `GET /healthz`, runs a periodic keepalive matmul to avoid ROCm idle-downclock latency spikes. |
+| `estimate_tokens()` | `backend/app/analysis_worker.py` | chars/4 token-count heuristic (no tokenizer dependency) deciding whether `run_analysis()` sends the whole text in one LLM call or falls back to chunked analysis. |
+| `try_claim_generation()` / `get_generation_task_by_label()` | `backend/app/generation_worker.py` | A single global generation lock (one GPU, one synthesis call at a time) keyed by `"segment:{id}"`/`"preview:{id}"`/`"batch:{id}"` labels, so any in-flight generation of any kind can be looked up and cancelled. |
+| TTS inference server | `backend/tts_service/server.py`, `backend/tts_service/model.py` | The isolated GPU process: loads a resident Qwen3-TTS checkpoint (`"1.7b"` by default) at startup, exposes `POST /synthesize`, `POST /model/{model_id}/load` (on-demand checkpoint swap between the two supported models), `POST /cancel` (interrupts in-flight synthesis), and `GET /healthz`; runs a periodic keepalive matmul to avoid ROCm idle-downclock latency spikes. |
 
 ## Directory structure rationale
 
@@ -219,14 +243,29 @@ reachable from the host network.
   (`.planning/PROJECT.md` Key Decisions, GEN-03/D-06).
 
 - **Content-hash caching for generated audio.** `compute_cache_key()`
-  hashes `(resolved_speaker, voice_instructions, text, TTS_MODEL_VERSION)`.
-  It is always recomputed live from current DB state before a generate call
-  rather than trusted as stored ground truth, so an out-of-band character
-  preset change, a text edit, or a future TTS model-version bump are all
-  naturally cache-busting with no separate invalidation code path. Batch
-  regeneration and single-row regeneration share the exact same
-  `regenerate_segment()` function, so their cache-hit behavior can never
-  drift apart.
+  hashes `(resolved_speaker, voice_instructions, text, model_id)`, where
+  `model_id` is the project's *live* `tts_model` field (`"1.7b"`/`"0.6b"`),
+  not a hardcoded version constant. It is always recomputed live from
+  current DB state before a generate call rather than trusted as stored
+  ground truth, so an out-of-band character preset change, a text edit, or
+  a per-project TTS model swap (`POST /model/{model_id}/load` against the
+  TTS container) are all naturally cache-busting with no separate
+  invalidation code path. Batch regeneration and single-row regeneration
+  share the exact same `regenerate_segment()` function, so their cache-hit
+  behavior can never drift apart.
+
+- **On-demand model swap and mid-synthesis cancel, not a static single
+  model.** The TTS container exposes `POST /model/{model_id}/load` to swap
+  its resident checkpoint between the two supported models without a
+  container restart, and `POST /cancel` to interrupt an in-flight
+  `/synthesize` call. Cancel handlers never call `task.cancel()` on the
+  backend's own generation task — cancelling a task awaiting
+  `run_in_threadpool` was found not to wait for the underlying worker
+  thread to actually stop, which would release the global generation lock
+  while the GPU call was still running. Instead they call
+  `tts_client.cancel()` (the real server-side interrupt) and then plainly
+  `await` the task, which only returns once synthesis has genuinely
+  finished.
 
 - **Tailscale-only exposure, no separate auth layer.** The backend
   container publishes only to `127.0.0.1:8000` on the host
@@ -238,7 +277,9 @@ reachable from the host network.
 
 ## Testing
 
-Testing runs against the real deployment: bring the two-container pod up
+There is no automated test suite (no `backend/tests/` directory exists) —
+testing runs against the real deployment: bring the two-container pod up
 with `bash deploy/run-local.sh` and exercise the app end-to-end (upload →
-analysis → generation → join). There is no mock backend or offline test
-suite — the app always talks to the real TTS container and OpenRouter.
+analysis → generation → join). There is no mock/offline mode for either
+external dependency — the app always talks to the real TTS container and
+the real OpenRouter API.

@@ -16,9 +16,9 @@ Turning a book into a listenable audiobook usually means either paying for narra
 1. Upload a `.txt` or `.epub` file to create a project.
 2. An LLM (OpenRouter, default model `x-ai/grok-4.3`) analyzes the text, proposes a cast of characters, and splits the text into narration/dialogue segments with suggested voice instructions.
 3. You review and adjust the cast (rename, merge, edit descriptions, assign a preset voice or write free-text voice instructions) in a wizard.
-4. You review and edit the segment table — narrator, voice instructions, and text are all editable per row.
+4. You review and edit the segment table — narrator, voice instructions, and text are all editable per row. Per project, you can also pick the TTS checkpoint (higher-quality 1.7B vs. faster 0.6B) and the output format (FLAC, MP3, or Opus) from the config panel.
 5. Each row's audio is generated on demand via a self-hosted Qwen TTS model running on the local GPU. Generated audio is cached and only invalidated when a row's content actually changes — nothing regenerates automatically on edit.
-6. Once you're happy with the segments, generate the remaining audio and download the final joined MP3 or WAV.
+6. Once you're happy with the segments, generate the remaining audio and download the final joined file (FLAC, MP3, or Opus).
 
 Projects (source text, cast, segment table, generated audio) are saved automatically and can be reopened later.
 
@@ -44,6 +44,8 @@ qwen-ebook/
     ├── bootstrap-vm.sh
     └── README.md
 ```
+
+There is no separate unit test suite — the app always talks to the real TTS container over HTTP and to OpenRouter, so "testing" means exercising the real pod via `deploy/run-local.sh` rather than running mocked unit tests.
 
 The backend serves the built frontend itself (`frontend/dist` is copied into the backend image at build time), so in production it's a single HTTP surface — no separate static host.
 
@@ -76,7 +78,7 @@ The backend needs an OpenRouter API key for text analysis:
 - `OPENROUTER_API_KEY` — your OpenRouter API key
 - `OPENROUTER_MODEL` — optional, overrides the default LLM model (`x-ai/grok-4.3`)
 
-<!-- VERIFY: where OPENROUTER_API_KEY / OPENROUTER_MODEL should be set for the production Quadlet deployment (e.g. an env file referenced by deploy/qwen-ebook-backend.container) -->
+In production, these are read from `EnvironmentFile=/home/oton/qwen-ebook/backend/.env` as declared in `deploy/qwen-ebook-backend.container` — the same gitignored `.env` used for local `uv run` development, so the key lives in exactly one place.
 
 ## License
 
