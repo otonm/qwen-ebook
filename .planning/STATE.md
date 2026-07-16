@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Generation UX & Config Rework
-current_phase: 7
-status: completed
-stopped_at: Completed 07-05-PLAN.md (Phase 7 complete)
-last_updated: "2026-07-16T06:59:48.539Z"
+status: Awaiting next milestone
+stopped_at: Phase 7 verified (UAT 23/23, review fixes applied, security clean) — v1.1 milestone 100% complete
+last_updated: "2026-07-16T07:03:01.732Z"
 last_activity: 2026-07-16
-last_activity_desc: Phase 7 complete
+last_activity_desc: Milestone v1.1 completed and archived
 progress:
   total_phases: 7
   completed_phases: 4
   total_plans: 15
   completed_plans: 15
   percent: 57
+current_phase: 7
 current_phase_name: Unified Generate/Stop/Play Button & Trimmed Segment Table
 ---
 
@@ -24,16 +24,14 @@ current_phase_name: Unified Generate/Stop/Play Button & Trimmed Segment Table
 See: .planning/PROJECT.md (updated 2026-07-16)
 
 **Core value:** Given a long text, produce a natural-sounding, multi-character narrated audio file with minimal manual editing — the LLM does the heavy lifting of casting and segmenting, the user just fine-tunes.
-**Current focus:** v1.1 milestone complete — ready to archive via /gsd-complete-milestone
+**Current focus:** Planning next milestone (/gsd-new-milestone)
 
 ## Current Position
 
-Phase: 7
-Plan: Not started
-Status: All phases complete
-Last activity: 2026-07-16 — Phase 7 complete
-
-Progress: [██████████] 100%
+Phase: Milestone v1.1 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-07-16 — Milestone v1.1 completed and archived
 
 ## Performance Metrics
 
@@ -111,10 +109,15 @@ Items acknowledged and carried forward from previous milestone close:
 | v2 | ENH-02: "Last good" segment audio fallback | Deferred to v2 | Requirements definition |
 | v2 | OUT-01: Audiobook-specific output (M4B, chapter markers) | Deferred to v2 | Requirements definition |
 | v2 | VOICE-01: Voice cloning from personal recordings | Deferred to v2 | Requirements definition |
+| todo/ui | Cast Review wizard SegmentPreview generate-all/stop capability (parts 1-2 of the 2026-07-14 todo shipped in Phase 7; part 3 never scoped) | Deferred at v1.1 close | 2026-07-16 |
 
 ## Session Continuity
 
 Last session: 2026-07-16
 Stopped at: Phase 7 verified (UAT 23/23, review fixes applied, security clean) — v1.1 milestone 100% complete
 Resume file: None
-Next step: /gsd-complete-milestone v1.1
+Next step: /gsd-new-milestone
+
+## Operator Next Steps
+
+- Start the next milestone with /gsd-new-milestone

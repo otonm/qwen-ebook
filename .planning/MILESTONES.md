@@ -1,5 +1,24 @@
 # Milestones
 
+## v1.1 Generation UX & Config Rework (Shipped: 2026-07-16)
+
+**Phases completed:** 4 phases (4-7), 15 plans, 37 tasks
+**Timeline:** 2026-07-13 → 2026-07-16 (4 days)
+
+**Delivered:** True mid-flight GPU cancellation, on-demand 1.7B/0.6B model swap, output format/filename/download controls, and one unified yellow/red/green Generate/Stop/Play button across every generation site.
+
+**Key accomplishments:**
+
+- True immediate cancellation: `StoppingCriteria` patched into qwen-tts's decode loop (its wrapper silently drops the kwarg — fixed by patching `talker.generate` directly), verified to abort a live ROCm decode within ~46ms, exposed via `POST /cancel` + async 202/poll contract with label-keyed task registry and hold-lock-until-genuinely-stopped semantics.
+- On-demand model swap: `ensure_loaded(model_id)` engine proven on the RX 9070 XT with zero VRAM drift over 10+ swap cycles; `Project.tts_model` threaded into the content-hash cache key so a swap can never serve stale cross-model audio; Config Panel Select with load-spinner/revert-on-failure UX and persistent 0.6B steering warning.
+- Output controls: 3-way FLAC/MP3/Opus ffmpeg codec dispatch (single CODEC_TABLE, no new dependencies), per-project format/filename columns with sanitizing PATCH endpoint, and a blue Download button backed by a FileResponse route.
+- UI unification: shared `useGenerateStopPlay` hook + `GenerateStopPlayButton` component collapsed four hand-rolled generate/play implementations (segment rows, character preview rows, CastWizard cards, batch Generate All) into one yellow/red/green control; CharacterCard gained its first working Stop; segment table trimmed to exactly 3 editable columns with the Status badge column deleted; joined-output in-browser green Play added.
+- Verification depth: every phase human-verified on the real deploy target; post-completion standard code review fixed 8 further findings (3 critical, 5 warning); final UAT passed 23/23; security review closed all 10 threats (threats_open: 0).
+
+**Known deferrals:** 1 acknowledged open item at close — SegmentPreview (wizard right panel) generate-all/stop capability, recorded in STATE.md Deferred Items (parts 1-2 of the originating todo shipped in Phase 7).
+
+---
+
 ## v1.0 MVP (Shipped: 2026-07-12)
 
 **Phases completed:** 3 phases, 17 plans, 39 tasks

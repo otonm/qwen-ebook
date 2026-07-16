@@ -8,15 +8,17 @@ A self-hosted web app that turns long text (ebooks, articles) into a multi-voice
 
 Given a long text, produce a natural-sounding, multi-character narrated audio file with minimal manual editing — the LLM does the heavy lifting of casting and segmenting, the user just fine-tunes.
 
-## Current Milestone: v1.1 Generation UX & Config Rework
+## Current State
 
-**Goal:** Replace ambiguous status indicators with a single clear color-coded generate/stop/play control everywhere audio is generated, and give the user real control over model, output format, filename, and downloading the finished file.
+**v1.1 shipped 2026-07-16** (4 phases, 15 plans, 37 tasks over 4 days). All 13 v1.1 requirements validated. Live on the production RX 9070 XT VM.
 
-**Target features:**
-- Segment table trimmed to 3 columns (Narrator / Voice Instructions / Text) — separate Status badge column dropped, state now conveyed by button color
-- One consistent yellow "Generate Preview" → red "Stop Generation" (kills the in-flight GPU call immediately) → green "Play" pattern, applied to: per-segment preview, per-character preview, and the Generate All batch flow. Any edit that invalidates audio reverts the control back to yellow.
-- Config panel: switch between two Qwen TTS models (1.7B / 0.6B, load-on-demand — only one resident in VRAM at a time), pick output format (FLAC / MP3 / Opus — WAV dropped), and set the output filename
-- Once all segments are generated and joined: a blue "Download" button plus a green "Play" to preview the joined file in-browser
+What v1.1 added on top of v1.0:
+- True mid-flight GPU cancellation (~46ms decode abort via patched StoppingCriteria, async 202+poll contract)
+- On-demand 1.7B/0.6B Qwen TTS model swap (VRAM-safe, cache-key-aware, 0.6B steering warning)
+- Output format (FLAC/MP3/Opus), custom filename, and Download button
+- One unified yellow/red/green Generate/Stop/Play control across all four generation sites; segment table trimmed to 3 editable columns
+
+**Next Milestone Goals:** not yet defined — run `/gsd-new-milestone`. Candidates: deferred v2 items (ENH-01 cost visibility, ENH-02 last-good audio fallback, OUT-01 M4B/chapters, VOICE-01 voice cloning) and the SegmentPreview wizard generate-all/stop gap deferred at v1.1 close.
 
 ## Requirements
 
@@ -85,6 +87,9 @@ Given a long text, produce a natural-sounding, multi-character narrated audio fi
 | Voice assignment mixes presets + context-derived instructions | Qwen TTS has limited presets; LLM-inferred character traits fill the gap for one-off characters | Phase 2: preset + free-text `instruct` steering both wired through the cast wizard and Config Panel, with on-demand preview generation added during Phase 3 UAT |
 | Self-hosted Qwen TTS on AMD GPU (ROCm) rather than cloud TTS API | Avoids per-request cost, keeps generation local to the Tailscale network | Phase 1: code/model/server proven correct against the real `qwen-tts` API; dev GPU (Radeon 780M/gfx1103, unsupported) reproducibly crashes on actual synthesis, documented via a fallback ladder. Production RX 9070 XT VM re-verification (D-09) closed out 2026-07-10 (commit `1ce34aa`): real non-silent audio confirmed end-to-end, rootful Podman is the required invocation shape (rootless `--group-add keep-groups` does not grant `/dev/kfd` access on this Podman/crun combo, independent of GPU architecture) |
 | Podman (not Docker) for deployment | User's existing infra preference | Phase 1: two-container Podman pod built and proven — GPU devices correctly isolated to the TTS container only, backend has none, network/error-boundary wiring confirmed working |
+| True-kill cancellation over queue-skip (v1.1 Phase 4) | "Stop" that only skips queued work felt dishonest; user wanted the GPU call itself interrupted | ✓ Good — qwen-tts wrapper drops `stopping_criteria`, fixed by patching `talker.generate` directly; ~46ms abort verified on real hardware |
+| Model swap invalidates all segment/preview audio rather than tracking per-model caches | One resident model, one cache truth — simpler than multi-model cache partitions | ✓ Good — `tts_model` in the content-hash key makes stale cross-model audio structurally impossible |
+| One shared generate/stop/play hook instead of four per-site implementations (v1.1 Phase 7) | Four hand-rolled variants had already diverged (one had no Stop at all) | ✓ Good — `useGenerateStopPlay` + `GenerateStopPlayButton`; post-review hardening (8 findings) landed once in the shared code, fixing all call sites |
 | Serve the built frontend from the backend container itself (multi-stage Containerfile + `StaticFiles` mount), not a separate static host | Every real-hardware check up to Phase 3 sign-off curl'd API routes directly, so nobody noticed the browser root URL 404'd until the user opened it | Post-sign-off fix (commit `63b705b`): one container serves both `/api/*` and `index.html`/JS/CSS, registered after all API routes so it only catches what no route claims; verified live through `tailscale serve` |
 
 ## Evolution
@@ -105,4 +110,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-15 after Phase 7 (Unified Generate/Stop/Play Button & Trimmed Segment Table) completion — v1.1 milestone complete*
+*Last updated: 2026-07-16 after v1.1 milestone completion (Generation UX & Config Rework)*
