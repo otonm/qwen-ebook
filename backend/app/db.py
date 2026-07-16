@@ -16,10 +16,8 @@ connection.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-
 from sqlalchemy import event
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import SQLModel, create_engine
 
 from app.config import settings
 
@@ -74,9 +72,3 @@ def _ensure_columns() -> None:
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
     _ensure_columns()
-
-
-def get_session() -> Iterator[Session]:
-    """Yield a fresh Session per call — not a shared long-lived one."""
-    with Session(engine) as session:
-        yield session

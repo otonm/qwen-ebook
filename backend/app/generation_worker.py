@@ -153,24 +153,6 @@ def get_generation_task_by_label(label: str) -> asyncio.Task | None:
     return _running_generations.get(label)
 
 
-def is_generation_running_by_label(label: str) -> bool:
-    """True if `label` has a live (not-yet-done) task registered."""
-    task = _running_generations.get(label)
-    return task is not None and not task.done()
-
-
-def is_generation_running(project_id: str) -> bool:
-    """Back-compat for generate_project: delegates to the "batch:{id}"
-    label."""
-    return is_generation_running_by_label(f"batch:{project_id}")
-
-
-def get_generation_task(project_id: str) -> asyncio.Task | None:
-    """Back-compat for generate_project/delete_project: delegates to the
-    "batch:{id}" label."""
-    return get_generation_task_by_label(f"batch:{project_id}")
-
-
 async def push_generation_event(project_id: str, event_type: str, payload: dict) -> None:
     """Push an event directly onto `project_id`'s progress queue. Used by
     main.py's cancel endpoint: once a run_batch_generation task is

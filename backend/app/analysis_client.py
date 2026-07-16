@@ -56,7 +56,7 @@ adapting, or condensing it.
 
 1. Identify the cast: the narrator plus every distinct speaking character
    in the text. For EACH character (including the narrator), pick the
-   single closest-matching voice preset from this fixed list of 5 personas
+   single closest-matching voice preset from this fixed list of personas
    and set `voice_preset` to its id:
 
 {_build_preset_roster_block()}

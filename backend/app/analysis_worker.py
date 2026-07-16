@@ -23,7 +23,6 @@ from app.config import settings
 from app.db import engine
 from app.models import Character, Project, Segment
 from app.schemas import CastAnalysisResult, CharacterSuggestion, SegmentSuggestion
-from app.token_estimate import estimate_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -144,10 +143,12 @@ async def progress_events(project_id: str) -> AsyncIterator[tuple[str, dict]]:
             return
 
 
-def _should_chunk(text: str) -> bool:
-    """D-05/D-06: prefer single-shot; only fall back to multi-chunk once
-    the chars/4 estimate exceeds the ~50%-of-context safety margin."""
-    return estimate_tokens(text) > settings.ANALYSIS_TOKEN_LIMIT
+def estimate_tokens(text: str) -> int:
+    """chars/4 token estimate — no tokenizer dependency. No official Grok
+    tokenizer is public; chars/4 is an honest, wide-margin heuristic
+    (~10-28% error per RESEARCH.md Pitfall 3), absorbed by D-06's
+    ~50%-of-context ANALYSIS_TOKEN_LIMIT safety margin. Not exact."""
+    return len(text) // 4
 
 
 def _group_chunks(chunks: list[str], budget_chars: int) -> list[str]:
@@ -298,7 +299,9 @@ async def run_analysis(project_id: str) -> None:
         token_count = estimate_tokens(text)
         logger.info(f"project {project_id} estimated at {token_count} tokens")
 
-        if _should_chunk(text):
+        # D-05/D-06: prefer single-shot; only fall back to multi-chunk once
+        # the chars/4 estimate exceeds the ~50%-of-context safety margin.
+        if token_count > settings.ANALYSIS_TOKEN_LIMIT:
             await _run_chunked_analysis(project_id, text, queue)
         else:
             await queue.put(("progress", {"stage": "analyzing"}))

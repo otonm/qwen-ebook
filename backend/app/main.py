@@ -35,7 +35,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from sqlmodel import Session, select
+from sqlmodel import Session, delete, select
 from starlette.concurrency import run_in_threadpool
 
 from app import tts_client
@@ -50,11 +50,9 @@ from app.generation_worker import (
     consume_stop_requested,
     ensure_generation_queue,
     generation_progress_events,
-    get_generation_task,
     get_generation_task_by_label,
     has_pending_generation_queue,
     is_any_generation_active,
-    is_generation_running,
     is_stop_requested,
     push_generation_event,
     register_generation_task,
@@ -240,6 +238,19 @@ def _serialize_segment(segment: Segment, character_name: str | None) -> dict:
     }
 
 
+def _load_project_response(session: Session, project: Project) -> dict:
+    """Fetch `project`'s characters + segments and serialize the full
+    project payload — the shared read path for every endpoint that returns
+    the whole project."""
+    characters = list(
+        session.exec(select(Character).where(Character.project_id == project.id)).all()
+    )
+    segments = list(
+        session.exec(select(Segment).where(Segment.project_id == project.id)).all()
+    )
+    return _serialize_project(project, characters, segments)
+
+
 def _serialize_project(
     project: Project, characters: list[Character], segments: list[Segment]
 ) -> dict:
@@ -298,14 +309,7 @@ async def get_project(project_id: str):
         project = session.get(Project, project_id)
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
-
-        characters = list(
-            session.exec(select(Character).where(Character.project_id == project_id)).all()
-        )
-        segments = list(
-            session.exec(select(Segment).where(Segment.project_id == project_id)).all()
-        )
-        return _serialize_project(project, characters, segments)
+        return _load_project_response(session, project)
 
 
 @app.delete("/projects/{project_id}", status_code=204)
@@ -339,7 +343,7 @@ async def delete_project(project_id: str) -> Response:
             session.exec(select(Segment).where(Segment.project_id == project_id)).all()
         )
 
-    task = get_generation_task(project_id)
+    task = get_generation_task_by_label(f"batch:{project_id}")
     if task is not None:
         request_stop(f"batch:{project_id}")
         await run_in_threadpool(tts_client.cancel)
@@ -355,11 +359,9 @@ async def delete_project(project_id: str) -> Response:
             Path(path).unlink(missing_ok=True)
 
     with Session(engine) as session:
-        for segment in segments:
-            session.delete(session.get(Segment, segment.id))
-        for character in characters:
-            session.delete(session.get(Character, character.id))
-        session.delete(session.get(Project, project_id))
+        session.exec(delete(Segment).where(Segment.project_id == project_id))
+        session.exec(delete(Character).where(Character.project_id == project_id))
+        session.exec(delete(Project).where(Project.id == project_id))
         session.commit()
 
     return Response(status_code=204)
@@ -406,13 +408,7 @@ async def set_project_model(project_id: str, body: SetModelRequest) -> dict:
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
         if project.tts_model == body.model_id:
-            characters = list(
-                session.exec(select(Character).where(Character.project_id == project_id)).all()
-            )
-            segments = list(
-                session.exec(select(Segment).where(Segment.project_id == project_id)).all()
-            )
-            return _serialize_project(project, characters, segments)
+            return _load_project_response(session, project)
 
     label = f"model-load:{body.model_id}"
     if not try_claim_generation(label):
@@ -473,13 +469,7 @@ async def set_project_model(project_id: str, body: SetModelRequest) -> dict:
 
             session.commit()
 
-            characters = list(
-                session.exec(select(Character).where(Character.project_id == project_id)).all()
-            )
-            segments = list(
-                session.exec(select(Segment).where(Segment.project_id == project_id)).all()
-            )
-            result = _serialize_project(project, characters, segments)
+            result = _load_project_response(session, project)
 
         # Mirrors patch_segment/patch_character's ordering: invalidate inside
         # the session, unlink the old files only after commit.
@@ -550,13 +540,7 @@ async def patch_project_config(project_id: str, patch: ProjectConfigPatch) -> di
         session.commit()
         session.refresh(project)
 
-        characters = list(
-            session.exec(select(Character).where(Character.project_id == project_id)).all()
-        )
-        segments = list(
-            session.exec(select(Segment).where(Segment.project_id == project_id)).all()
-        )
-        result = _serialize_project(project, characters, segments)
+        result = _load_project_response(session, project)
 
     if old_output_path:
         # Mirrors patch_segment's post-commit unlink pattern — the
@@ -1386,7 +1370,8 @@ async def generate_project(project_id: str) -> dict:
         if session.get(Project, project_id) is None:
             raise HTTPException(status_code=404, detail="Project not found")
 
-    if is_generation_running(project_id):
+    batch_task = get_generation_task_by_label(f"batch:{project_id}")
+    if batch_task is not None and not batch_task.done():
         return {"status": "already_running"}
 
     if not try_claim_generation(f"batch:{project_id}"):
@@ -1427,7 +1412,7 @@ async def cancel_generation(project_id: str) -> dict:
     finished. As before, never call release_generation() directly
     (Pitfall 2) — the lock frees only via run_batch_generation's own
     done-callback once the underlying call has truly stopped."""
-    task = get_generation_task(project_id)
+    task = get_generation_task_by_label(f"batch:{project_id}")
     if task is None:
         return {"status": "not_running"}
 
